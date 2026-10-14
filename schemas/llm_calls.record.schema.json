@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm_calls.record.schema.json",
+  "title": "One llm_calls.jsonl record",
+  "description": "Contract for llm_calls.jsonl (applies to each line)",
+  "additionalProperties": true,
+  "properties": {
+    "stage": {
+      "title": "Stage",
+      "type": "string"
+    },
+    "incident_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Incident Id"
+    },
+    "timestamp": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "provider": {
+      "title": "Provider",
+      "type": "string"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "prompt_hash": {
+      "minLength": 1,
+      "title": "Prompt Hash",
+      "type": "string"
+    },
+    "input_artifacts": {
+      "description": "real file paths",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Input Artifacts",
+      "type": "array"
+    },
+    "output_artifact": {
+      "description": "real file path",
+      "minLength": 1,
+      "title": "Output Artifact",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stage",
+    "incident_id",
+    "timestamp",
+    "provider",
+    "model",
+    "prompt_hash",
+    "input_artifacts",
+    "output_artifact"
+  ],
+  "type": "object"
+}

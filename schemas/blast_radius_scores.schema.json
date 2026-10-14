@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "blast_radius_scores.schema.json",
+  "title": "Blast radius scores (REQUIREMENT step 7)",
+  "description": "Contract for blast_radius_scores.json",
+  "$defs": {
+    "BlastFactor": {
+      "additionalProperties": true,
+      "properties": {
+        "points": {
+          "minimum": 0,
+          "title": "Points",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "points"
+      ],
+      "title": "BlastFactor",
+      "type": "object"
+    },
+    "BlastScore": {
+      "additionalProperties": true,
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "blast_radius_score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Blast Radius Score",
+          "type": "integer"
+        },
+        "contributing_factors": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BlastFactor"
+          },
+          "title": "Contributing Factors",
+          "type": "object"
+        },
+        "justification": {
+          "minLength": 1,
+          "title": "Justification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "incident_id",
+        "blast_radius_score",
+        "contributing_factors",
+        "justification"
+      ],
+      "title": "BlastScore",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "formula": {
+      "minLength": 1,
+      "title": "Formula",
+      "type": "string"
+    },
+    "computed_by": {
+      "const": "deterministic_code",
+      "title": "Computed By",
+      "type": "string"
+    },
+    "scores": {
+      "items": {
+        "$ref": "#/$defs/BlastScore"
+      },
+      "title": "Scores",
+      "type": "array"
+    }
+  },
+  "required": [
+    "formula",
+    "computed_by",
+    "scores"
+  ],
+  "type": "object"
+}

@@ -86,7 +86,10 @@ jobs:
       - name: Run pipeline (scripted operator review, offline model)
         run: make run-scripted PROVIDER=offline
 
-      - name: Validate artifacts (22 requirement checks)
+      - name: Published JSON Schemas are up to date
+        run: uv run irp schemas --check
+
+      - name: Validate artifacts (24 checks; the offline model is reported as a WARN)
         run: make validate
 
       - name: Replay from cached LLM responses (no network)
@@ -143,8 +146,8 @@ jobs:
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1' }}
         run: make run-scripted PROVIDER=openai
 
-      - name: Validate artifacts
-        run: make validate
+      - name: Validate artifacts (fail if any AI stage was not answered by an LLM)
+        run: make validate REQUIRE_LLM=1
 
       - name: Upload pipeline artifacts
         if: always()

@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "incident_analysis.schema.json",
+  "title": "Stage 1 classifications and Stage 2 plans (REQUIREMENT steps 3-4)",
+  "description": "Contract for incident_analysis.json",
+  "$defs": {
+    "AvoidedActionContract": {
+      "additionalProperties": true,
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "reason"
+      ],
+      "title": "AvoidedActionContract",
+      "type": "object"
+    },
+    "RecommendedActionContract": {
+      "additionalProperties": true,
+      "properties": {
+        "action": {
+          "description": "one of runbook_policy.allowed_actions",
+          "title": "Action",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "requires_human_approval": {
+          "description": "taken from runbook_policy.action_policies",
+          "title": "Requires Human Approval",
+          "type": "boolean"
+        },
+        "risk_note": {
+          "title": "Risk Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "reason",
+        "requires_human_approval",
+        "risk_note"
+      ],
+      "title": "RecommendedActionContract",
+      "type": "object"
+    },
+    "Stage1Classification": {
+      "additionalProperties": true,
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "incident_class": {
+          "description": "one of runbook_policy.incident_classes",
+          "title": "Incident Class",
+          "type": "string"
+        },
+        "urgency": {
+          "description": "one of runbook_policy.urgency_levels",
+          "title": "Urgency",
+          "type": "string"
+        },
+        "customer_impact_summary": {
+          "title": "Customer Impact Summary",
+          "type": "string"
+        },
+        "suspected_root_cause": {
+          "title": "Suspected Root Cause",
+          "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "incident_id",
+        "incident_class",
+        "urgency",
+        "customer_impact_summary",
+        "suspected_root_cause",
+        "confidence"
+      ],
+      "title": "Stage1Classification",
+      "type": "object"
+    },
+    "Stage2Plan": {
+      "additionalProperties": true,
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "recommended_actions": {
+          "items": {
+            "$ref": "#/$defs/RecommendedActionContract"
+          },
+          "title": "Recommended Actions",
+          "type": "array"
+        },
+        "explicitly_avoided_actions": {
+          "items": {
+            "$ref": "#/$defs/AvoidedActionContract"
+          },
+          "title": "Explicitly Avoided Actions",
+          "type": "array"
+        },
+        "rollback_consideration": {
+          "title": "Rollback Consideration",
+          "type": "string"
+        },
+        "verification_checks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Verification Checks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "incident_id",
+        "recommended_actions",
+        "explicitly_avoided_actions",
+        "rollback_consideration",
+        "verification_checks"
+      ],
+      "title": "Stage2Plan",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "stage1": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Stage1Classification"
+      },
+      "description": "keyed by incident_id",
+      "title": "Stage1",
+      "type": "object"
+    },
+    "stage2": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Stage2Plan"
+      },
+      "description": "keyed by incident_id; one Stage 2 call each",
+      "title": "Stage2",
+      "type": "object"
+    }
+  },
+  "required": [
+    "stage1",
+    "stage2"
+  ],
+  "type": "object"
+}

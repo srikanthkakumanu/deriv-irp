@@ -9,6 +9,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from ..application.artifact_schemas import ARTIFACT_CONTRACTS, render_schema
 from ..application.llm_gateway import LLMGatewayError
 from ..bootstrap import DEFAULT_OUTPUT_DIR, RunConfig, build_pipeline, build_validator
 from ..domain.errors import DomainError
@@ -47,21 +48,41 @@ def _parser() -> argparse.ArgumentParser:
     val.add_argument("--input-dir", type=Path, default=None,
                      help="folder with the 3 input files (default: the files recorded in the run manifest)")
     val.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="artifact folder (default: data/output)")
+    val.add_argument("--require-llm", action="store_true",
+                     help="fail (instead of warn) if the AI stages were answered by the offline rule-based stand-in")
+    sch = sub.add_parser("schemas", help="export the artifact JSON Schemas")
+    sch.add_argument("--out-dir", type=Path, default=Path("schemas"), help="target folder (default: schemas)")
+    sch.add_argument("--check", action="store_true", help="only report whether the folder is up to date (exit 1 if not)")
     return ap
 
 
-def validate(input_dir: Path | None, out_dir: Path) -> int:
+def validate(input_dir: Path | None, out_dir: Path, require_llm: bool = False) -> int:
     try:
-        results = build_validator(input_dir, out_dir).run()
+        results = build_validator(input_dir, out_dir, require_llm).run()
     except InputFileError as exc:
         print(f"FAIL  input files: {exc}")
         return 1
     width = max(len(r.name) for r in results)
     for r in results:
-        print(f"{'PASS' if r.ok else 'FAIL'}  {r.name:<{width}}  {r.detail}")
+        print(f"{'FAIL' if not r.ok else 'WARN' if r.warning else 'PASS'}  {r.name:<{width}}  {r.detail}")
     failed = sum(not r.ok for r in results)
-    print(f"\n{len(results) - failed}/{len(results)} checks passed")
+    warned = sum(r.warning for r in results)
+    print(f"\n{len(results) - failed}/{len(results)} checks passed" + (f" ({warned} with a warning)" if warned else ""))
     return 1 if failed else 0
+
+
+def export_schemas(out_dir: Path, check: bool) -> int:
+    """Write schemas/<artifact>.schema.json, or with ``check`` report files that are missing or stale."""
+    stale = [c.schema_file for c in ARTIFACT_CONTRACTS
+             if not (out_dir / c.schema_file).is_file() or (out_dir / c.schema_file).read_text(encoding="utf-8") != render_schema(c)]
+    if check:
+        print(f"stale or missing in {out_dir}: {stale}; run `make schemas`" if stale else f"{out_dir} is up to date")
+        return 1 if stale else 0
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for c in ARTIFACT_CONTRACTS:
+        (out_dir / c.schema_file).write_text(render_schema(c), encoding="utf-8")
+    print(f"wrote {len(ARTIFACT_CONTRACTS)} schemas to {out_dir} ({len(stale)} changed)")
+    return 0
 
 
 EXIT_INTERRUPTED = 130
@@ -77,7 +98,9 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _terminate_gracefully)
     args = _parser().parse_args(argv)
     if args.cmd == "validate":
-        return validate(args.input_dir, args.out_dir)
+        return validate(args.input_dir, args.out_dir, args.require_llm)
+    if args.cmd == "schemas":
+        return export_schemas(args.out_dir, args.check)
     config = RunConfig(input_dir=args.input_dir, out_dir=args.out_dir, provider=args.provider,
                        decisions_file=args.decisions_file, replay=args.replay, correlation_window_s=args.window,
                        strict=args.strict, include_optional_outputs=not args.skip_optional)

@@ -9,6 +9,7 @@ from ..application.ports import LLMRequest
 
 class OpenAIModel:
     name = "openai"
+    is_llm = True
 
     def __init__(self, model: str, temperature: float = 0.0, seed: int = 7, timeout_s: float = 60.0) -> None:
         try:

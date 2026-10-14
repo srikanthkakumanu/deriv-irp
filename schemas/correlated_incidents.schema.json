@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "correlated_incidents.schema.json",
+  "title": "Correlated incidents (REQUIREMENT step 2)",
+  "description": "Contract for correlated_incidents.json",
+  "$defs": {
+    "CorrelatedIncident": {
+      "additionalProperties": true,
+      "properties": {
+        "incident_id": {
+          "minLength": 1,
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "alert_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Alert Ids",
+          "type": "array"
+        },
+        "primary_service": {
+          "title": "Primary Service",
+          "type": "string"
+        },
+        "impacted_services": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Impacted Services",
+          "type": "array"
+        },
+        "region": {
+          "title": "Region",
+          "type": "string"
+        },
+        "correlation_basis": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Correlation Basis",
+          "type": "array"
+        },
+        "contains_deploy_signal": {
+          "title": "Contains Deploy Signal",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "incident_id",
+        "alert_ids",
+        "primary_service",
+        "impacted_services",
+        "region",
+        "correlation_basis",
+        "contains_deploy_signal"
+      ],
+      "title": "CorrelatedIncident",
+      "type": "object"
+    }
+  },
+  "items": {
+    "$ref": "#/$defs/CorrelatedIncident"
+  },
+  "minItems": 1,
+  "type": "array"
+}

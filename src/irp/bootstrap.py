@@ -92,9 +92,9 @@ def _inputs_from_manifest(out_dir: Path) -> InputFiles | None:
         return None
 
 
-def build_validator(input_dir: Path | None, out_dir: Path) -> RunValidator:
+def build_validator(input_dir: Path | None, out_dir: Path, require_llm: bool = False) -> RunValidator:
     """Validate against the input files the run actually used (from its manifest) unless an
     input directory is given explicitly; fall back to normal input resolution."""
     files = (resolve_input_files(input_dir) if input_dir is not None
              else _inputs_from_manifest(out_dir) or resolve_input_files(None))
-    return RunValidator(FileSystemArtifactStore(out_dir), InputFileStore(files))
+    return RunValidator(FileSystemArtifactStore(out_dir), InputFileStore(files), require_llm=require_llm)

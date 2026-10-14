@@ -11,8 +11,10 @@ GENERATED := normalized_alerts.json correlated_incidents.json incident_analysis.
              policy_simulation.json llm_calls.jsonl run_manifest.json
 IO_ARGS = $(if $(DATA_DIR),--input-dir $(DATA_DIR)) --out-dir $(OUT_DIR)
 IN_OPT = $(if $(DATA_DIR),-i $(DATA_DIR))
+# REQUIRE_LLM=1 -> `make validate` fails runs whose AI stages used the offline rule-based stand-in
+REQUIRE_LLM ?=
 
-.PHONY: help setup run run-scripted replay start start-bg stop status restart validate test coverage clean clean-all
+.PHONY: help setup run run-scripted replay start start-bg stop status restart validate schemas test coverage clean clean-all
 
 help: ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  %-14s %s\n", $$1, $$2}'
@@ -46,8 +48,11 @@ status: ## Show whether a run is in progress and the stage reached by the latest
 restart: ## Stop any in-flight run, then start a new one in the background
 	scripts/restart.sh $(IN_OPT) -o $(OUT_DIR) --mode $(MODE) --provider $(PROVIDER) --decisions $(DECISIONS) --background
 
-validate: ## Validate the artifacts of the last run
-	$(UV) run python validate.py $(IO_ARGS)
+validate: ## Validate the artifacts of the last run (REQUIRE_LLM=1 fails offline-model runs)
+	$(UV) run python validate.py $(IO_ARGS) $(if $(REQUIRE_LLM),--require-llm)
+
+schemas: ## Regenerate the published artifact JSON Schemas in schemas/
+	$(UV) run irp schemas
 
 test: ## Run the pytest suite
 	$(UV) run --group dev pytest -q

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented. 189 tests passing, 99% line coverage, `make validate` 22/22 |
+| **Status** | Implemented. 213 tests passing (including Hypothesis property tests), 99% line coverage, `make validate` 24/24 (an offline-model run passes with 1 WARN) |
 | **Source requirement** | [`REQUIREMENT.md`](REQUIREMENT.md) |
 | **Functional baseline** | [`BRD.md`](BRD.md) (personas P1–P3, use cases UC-01 to UC-12, resolved self-check findings) |
 | **Scope of this document** | How the BRD is realised: architecture, workflows, technology, layers, boundaries |
@@ -37,7 +37,7 @@ The system is a **staged, replayable control-plane workflow**. It turns raw plat
 | **Determinism where it matters** | Normalisation, correlation, blast radius, policy enforcement, review application and what-if simulation are pure domain code with no LLM. |
 | **Policy is the source of truth** | `RunbookPolicy` decides permissions and approval needs. The LLM's approval flag is overwritten, and disallowed actions are filtered out and recorded. |
 | **Human in the loop** | A mandatory review checkpoint sits before the brief. Decisions are re-checked against policy at the final urgency. |
-| **Auditability** | Every stage transition is timestamped. Every LLM call is logged with real artifact paths, and the raw request and response are kept. The path, origin and hash of each input are recorded. A validator re-derives the state from the files the run actually used. |
+| **Auditability** | Every stage transition is timestamped. Every LLM call is logged with real artifact paths and whether the provider is a real LLM, and the raw request and response are kept. The path, origin and hash of each input are recorded. A validator re-derives the state from the files the run actually used and checks the artifacts against published JSON Schemas. |
 | **Replayability** | LLM responses are cached by prompt hash, operator decisions can be scripted, and prompts contain no wall-clock data. |
 | **Clean architecture** | Layered and hexagonal (ports and adapters). Domain-Driven Design aggregates and value objects. Dependencies point inward only. |
 
@@ -127,11 +127,12 @@ src/irp/
 ├── domain/            # Layer 1: business rules (Pydantic value objects, domain services)
 ├── application/       # Layer 2: use cases, ports, LLM contracts, gateway, validator, prompts
 ├── infrastructure/    # Layer 3: adapters for files, OpenAI, offline model, presenter, clock
-├── interface/         # Layer 4: CLI and operator consoles (driving adapters)
+├── interface/         # Layer 4: CLI (run / validate / schemas) and operator consoles (driving adapters)
 ├── shared/            # cross-cutting pure helpers (canonical JSON, hashing, path display)
 └── bootstrap.py       # composition root (dependency injection)
 
 <repo root>/*.json(l)  # optional replacement inputs (take precedence over data/, per file)
+schemas/               # published JSON Schemas for the generated artifacts (`make schemas`)
 data/                  # bundled inputs: alerts.jsonl, service_topology.json, runbook_policy.json
 └── output/            # all generated artifacts, llm_raw/, llm_cache/ (git-ignored)
 scripts/               # start.sh · stop.sh · status.sh · restart.sh
@@ -160,12 +161,13 @@ docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (thi
 
 | Module | Responsibility |
 |---|---|
-| `ports.py` | Protocols: `InputSource`, `ArtifactStore`, `LanguageModel`, `OperatorConsole`, `Clock`, `ReportPresenter`; DTOs `PipelineInputs`, `LLMRequest` |
+| `ports.py` | Protocols: `InputSource`, `ArtifactStore`, `LanguageModel` (with `is_llm`), `OperatorConsole`, `Clock`, `ReportPresenter`; DTOs `PipelineInputs`, `LLMRequest` |
 | `contracts.py` | **Runtime-generated Pydantic response models.** `Literal` enums come from the loaded policy and incident IDs. Also the strict JSON-schema conversion, brief sections and ledger heading. |
 | `llm_gateway.py` | `AuditedLLMGateway`: stage guard, schema and semantic validation, one corrective retry, `llm_calls.jsonl` (logical artifact names resolved to real paths plus `input_sections` / `output_section`), `llm_raw/`, `llm_cache/` replay |
 | `use_cases/*` | One class per use case (UC-03 to UC-10) |
 | `pipeline.py` | `IncidentResponsePipeline`: orchestrates the 11 stages, persists the run manifest (input provenance and notices, stage history), maps artifact names to paths, and records a `termination` (aborted/failed + last completed stage) on interruption or error |
-| `validation.py` | `RunValidator`: 22 requirement checks against the persisted artifacts and the input files the run used (shared by the pipeline and `make validate`) |
+| `validation.py` | `RunValidator`: 24 checks against the persisted artifacts and the input files the run used (shared by the pipeline and `make validate`). A check can pass with a **warning**; `require_llm=True` turns the non-LLM-provider warning into a failure. |
+| `artifact_schemas.py` | **Published artifact contracts.** Pydantic models of the requirement's artifact formats (extra fields allowed), used by the validator and exported by `irp schemas` as JSON Schema draft 2020-12 to `schemas/` |
 | `documents.py` | Persisted document models (`OperatorDecisionsDocument`, `IncidentAnalysisDocument`, …) and presenter view models |
 | `review_commands.py` | The operator command grammar and the exact prompt text required by the specification |
 | `prompts/*.md` | Prompt templates. Data is injected at runtime and never hardcoded. |
@@ -176,8 +178,8 @@ docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (thi
 |---|---|---|
 | `resolve_input_files` / `FileSystemInputSource` / `InputFileStore` | `InputSource` | Resolves each input (repo root first, then `data/`, or `--input-dir`), reads it and records path, origin, SHA-256, size and read time. Malformed alert lines become `RawAlertRecord(parse_error=…)`. |
 | `FileSystemArtifactStore` | `ArtifactStore` | Atomic writes, JSONL append, path-traversal guard, byte-exact SHA-256 |
-| `OpenAIModel` | `LanguageModel` | Chat Completions with Structured Outputs (`strict: true`), temperature 0, seed 7, fallback for models without `temperature` |
-| `OfflineModel` | `LanguageModel` | Rule-based model following the same contract. Every label it emits comes from the payload's policy. |
+| `OpenAIModel` | `LanguageModel` | Chat Completions with Structured Outputs (`strict: true`), temperature 0, seed 7, fallback for models without `temperature`. `is_llm = True`. |
+| `OfflineModel` | `LanguageModel` | Rule-based stand-in following the same contract. Every label it emits comes from the payload's policy. `is_llm = False`, so every run that uses it is flagged (§8.1). |
 | `MarkdownPresenter` | `ReportPresenter` | Review screen, incident brief header and **Authoritative Action Ledger**, automation plan, postmortem |
 | `SystemClock` / `FixedStepClock` | `Clock` | UTC microsecond timestamps; deterministic clock for tests |
 
@@ -185,7 +187,7 @@ docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (thi
 
 | Module | Responsibility |
 |---|---|
-| `cli.py` | `irp run` / `irp validate`; minimal `.env` loader (never overrides existing environment variables); SIGTERM is turned into a graceful abort; exit codes 0 ok, 1 error, 2 validation failed, 130 stopped/interrupted. `irp validate` checks the inputs recorded in the run manifest unless `--input-dir` is given. |
+| `cli.py` | `irp run` / `irp validate [--require-llm]` / `irp schemas [--check]`; validation output marks each check `PASS`, `FAIL` or `WARN`; minimal `.env` loader (never overrides existing environment variables); SIGTERM is turned into a graceful abort; exit codes 0 ok, 1 error, 2 validation failed, 130 stopped/interrupted. `irp validate` checks the inputs recorded in the run manifest unless `--input-dir` is given. |
 | `operator_console.py` | `TerminalOperatorConsole` (TTY or piped stdin) and `ScriptedOperatorConsole` (decisions file, `#` comments) |
 
 ---
@@ -205,7 +207,7 @@ stateDiagram-v2
     REMEDIATION_PLANS_DRAFTED --> OPERATOR_REVIEW_COMPLETE: human checkpoint, policy re-check
     OPERATOR_REVIEW_COMPLETE --> INCIDENT_BRIEF_GENERATED: Stage 3, ONE LLM call on post-review state
     INCIDENT_BRIEF_GENERATED --> OPTIONAL_OUTPUTS_GENERATED: automation plan, postmortem, simulation
-    OPTIONAL_OUTPUTS_GENERATED --> VALIDATION_COMPLETE: RunValidator (22 checks)
+    OPTIONAL_OUTPUTS_GENERATED --> VALIDATION_COMPLETE: RunValidator (24 checks)
     VALIDATION_COMPLETE --> RESULTS_FINALISED
     RESULTS_FINALISED --> [*]
 ```
@@ -324,8 +326,9 @@ flowchart TD
     E --> H[make validate]
     F --> H
     G --> H
-    H --> I[22 PASS/FAIL checks · exit code 0 or 1]
+    H --> I[24 PASS / WARN / FAIL checks · exit code 0 or 1<br/>REQUIRE_LLM=1 fails offline-model runs]
     I --> J["Inspect llm_calls.jsonl, llm_raw/,<br/>run_manifest.json (input origins), operator_decisions.json"]
+    I --> K["Optionally check the artifacts against schemas/<br/>with any JSON Schema tool"]
 ```
 
 ---
@@ -465,6 +468,20 @@ The gateway's controls, in order:
 
 The provider is chosen by `--provider auto|openai|offline`. `auto` uses OpenAI when `OPENAI_API_KEY` is set (environment or `.env`) and the offline model otherwise.
 
+### 8.1 Runs without a real LLM
+
+The offline model lets the pipeline run with no key, but it is a rule-based stand-in, not the "policy-constrained LLM analysis" the requirement asks for. An evaluator who runs without a key must not mistake such a run for an LLM run, so the `LanguageModel` port carries `is_llm`, and a run with `is_llm = False` is flagged in five places:
+
+| Where | What |
+|---|---|
+| Console | A `WARNING … NOT a language model` banner at the start and at the end of the run |
+| `run_manifest.json` | `llm_provider.is_llm: false` |
+| `llm_calls.jsonl` | `provider_is_llm: false` on every record |
+| Generated Markdown | the provider label reads `offline-deterministic:rule-based-v1 [rule-based stand-in, NOT an LLM]` |
+| Validator | check *AI stages were answered by a real LLM* is **WARN**, or **FAIL** with `--require-llm` / `make validate REQUIRE_LLM=1` |
+
+The run still succeeds (exit 0) by default, because the offline model is how tests and CI exercise the pipeline mechanics. The opt-in live CI job validates with `REQUIRE_LLM=1`.
+
 ---
 
 ## 9. Artifacts and Audit Trail
@@ -472,6 +489,8 @@ The provider is chosen by `--provider auto|openai|offline`. `auto` uses OpenAI w
 Every artifact below is written to `data/output/` (configurable with `--out-dir`).
 
 **Input resolution** (`infrastructure/input_locator.py`): without `--input-dir`, each of the three input files is resolved independently. A file in the repo root takes precedence (where an evaluator is likely to drop replacement fixtures); otherwise the bundled `data/<file>` is used. A file found in neither place is an error naming both paths. When a repo-root file overrides a *different* bundled copy, a `NOTICE` is printed and stored in `run_manifest.json` → `input_notices`. Each input's path, `origin` (`repo_root`, `data_dir` or `explicit`) and SHA-256 are recorded, and the standalone validator re-checks **those exact files**, so a fixture changed after the run is caught.
+
+**Published JSON Schemas** (`schemas/`, from `application/artifact_schemas.py`): one JSON Schema (draft 2020-12) per generated artifact whose format the requirement sets: `normalized_alerts`, `correlated_incidents`, `incident_analysis`, `operator_decisions`, `blast_radius_scores`, `policy_simulation`, and a per-line schema for `llm_calls.jsonl`. They fix the fields the requirement names and allow extra fields. Policy-dependent values (classes, urgencies, action names) are strings, because membership depends on the fixture; the validator checks it against the policy the run used. The validator applies the same models, `irp schemas --check` (run in CI) and a test fail if the committed files drift, and a test validates real run artifacts against the committed files with the third-party `jsonschema` library.
 
 **`llm_calls.jsonl` paths:** `input_artifacts` and `output_artifact` hold real file paths, relative to the working directory (e.g. `data/runbook_policy.json`, `data/output/incident_analysis.json`). When a call reads or writes one part of a file, that part is named separately in `input_sections` / `output_section` (e.g. `stage1`, `stage2.INC-001`). The validator checks that every logged path exists.
 
@@ -484,10 +503,10 @@ Every artifact below is written to `data/output/` (configurable with `--out-dir`
 | `operator_decisions.json` | OPERATOR_REVIEW_COMPLETE | operator, mode, prompt, raw commands (including errors), decisions, per-incident `final_state`, `stage3_input_digest` |
 | `incident_brief.md` | INCIDENT_BRIEF_GENERATED | AI banner, 8 sections, deterministic **Authoritative Action Ledger** |
 | `safe_automation_plan.md`, `postmortem_template.md`, `policy_simulation.json` | OPTIONAL_OUTPUTS_GENERATED | see §5.2 |
-| `llm_calls.jsonl` | every LLM call | `stage, incident_id, timestamp, provider, model, prompt_hash, input_artifacts, output_artifact` (real paths) + `input_sections, output_section, call_id, attempts, status, latency_ms, errors, pipeline_stage_at_call, raw_record` |
+| `llm_calls.jsonl` | every LLM call | `stage, incident_id, timestamp, provider, model, prompt_hash, input_artifacts, output_artifact` (real paths) + `provider_is_llm, input_sections, output_section, call_id, attempts, status, latency_ms, errors, pipeline_stage_at_call, raw_record` |
 | `llm_raw/<call_id>.json` | every LLM call | full messages, schema, payload digest, response (git-ignored) |
 | `llm_cache/<prompt_hash>.json` | successful live calls | response for `--replay` (git-ignored by default) |
-| `run_manifest.json` | every stage | input provenance (path, origin, SHA-256, bytes, read time), `input_notices`, settings, provider, timestamped stage history with details, `termination` if stopped or failed |
+| `run_manifest.json` | every stage | input provenance (path, origin, SHA-256, bytes, read time), `input_notices`, settings, provider (with `is_llm`), timestamped stage history with details, `termination` if stopped or failed |
 
 **How the validator proves operator decisions reached Stage 3:** `operator_decisions.stage3_input_digest` must equal the `payload_digest` of the logged Stage 3 request. The Stage 3 payload must carry the same final urgencies and action sets. Replaying the logged decisions over the saved AI plans must reproduce the saved `final_state` exactly.
 
@@ -502,13 +521,14 @@ Every artifact below is written to `data/output/` (configurable with `--out-dir`
 | Domain and contract modelling | **Pydantic v2** | Immutable value objects, validation at boundaries, **runtime `create_model` with `Literal` enums** to generate strict JSON schemas from the policy |
 | Type hints | Throughout (`from __future__ import annotations`, `Protocol` ports) | Clear contracts between layers |
 | LLM provider | **OpenAI** (`openai` SDK, Chat Completions + Structured Outputs `strict: true`); model from `OPENAI_MODEL` (default `gpt-4.1`) | Schema-constrained output; temperature 0 and a fixed seed for stability |
-| Offline provider | Built-in `OfflineModel` | Runs end to end with no key; deterministic CI |
+| Offline provider | Built-in `OfflineModel` | Runs end to end with no key; deterministic CI. Flagged as not an LLM (§8.1). |
+| Artifact contracts | Pydantic models exported as **JSON Schema draft 2020-12** (`schemas/`) | Evaluators can check artifacts with any JSON Schema tool; no extra runtime dependency |
 | Persistence | Local filesystem: inputs in `data/`, outputs in `data/output/` (JSON / JSONL / Markdown), atomic writes | Required artifact formats; diffable; evaluator-friendly |
 | CLI | `argparse` (stdlib), `irp` console script | No extra dependency |
 | Secrets | `.env` (git-ignored), minimal built-in loader | No dependency; environment variables take precedence |
-| Testing | **pytest** + **pytest-cov** | 189 tests: unit (domain, application, infrastructure, interface) and integration |
-| Build / run | **Makefile** + **bash scripts** | `setup`, `run`, `run-scripted`, `replay`, `start`/`start-bg`/`stop`/`status`/`restart`, `validate`, `test`, `coverage`, `clean` |
-| CI | **GitHub Actions** (`.github/workflows/ci.yml`) | pytest + coverage gate (95%) on Python 3.11/3.12/3.13; offline end-to-end run, validate, replay and script smoke test; opt-in live OpenAI job |
+| Testing | **pytest** + **pytest-cov**; **Hypothesis** (property-based tests); **jsonschema** (third-party check of the published schemas) | 213 tests: unit (domain, application, infrastructure, interface), property-based and integration. Hypothesis and jsonschema are dev-only. |
+| Build / run | **Makefile** + **bash scripts** | `setup`, `run`, `run-scripted`, `replay`, `start`/`start-bg`/`stop`/`status`/`restart`, `validate`, `schemas`, `test`, `coverage`, `clean` |
+| CI | **GitHub Actions** (`.github/workflows/ci.yml`) | pytest + coverage gate (95%) on Python 3.11/3.12/3.13; offline end-to-end run, schema drift check, validate, replay and script smoke test; opt-in live OpenAI job validated with `REQUIRE_LLM=1` |
 
 Runtime dependencies are `openai` and `pydantic` only.
 
@@ -527,10 +547,29 @@ tests/
 │                                      #           hashing), command parser, review use case, brief consistency
 ├── unit/infrastructure/               # input file resolution, filesystem adapters, offline model, OpenAI adapter
 │                                      #   (mocked client), CLI, consoles
+├── property/                          # Hypothesis: random topologies (cycles included), alert streams and AI proposals
+│                                      #   against the normaliser, correlator, blast radius and policy enforcement
 └── integration/                       # end-to-end runs, replay, decision impact, tamper detection, replaced fixtures,
                                        #   evaluator scenarios (repo-root replacements, validating the files used),
-                                       #   run lifecycle (interrupt/failure recorded, start/stop/status scripts)
+                                       #   run lifecycle (interrupt/failure recorded, start/stop/status scripts),
+                                       #   non-LLM flagging and --require-llm, published schemas (drift, jsonschema)
 ```
+
+**Property-based tests** (`tests/property/`, 150 generated examples per property). Example tests pin known fixtures; these check the invariants that must hold for *any* equivalent fixture:
+
+| Property | Stage |
+|---|---|
+| Normalising the same rows twice gives identical alerts; IDs are unique; output is time-sorted, UTC, with an exact delta | Normalisation |
+| `alert_id` does not depend on JSON key order | Normalisation |
+| Every alert belongs to exactly one incident; incident IDs are `INC-001…` in order | Correlation |
+| Correlation is deterministic and independent of input order | Correlation |
+| Each incident has one region, a correct deploy flag, a primary service among its alerts, and a correlation basis | Correlation |
+| Any two symptoms that meet the link rule (region, window, causal adjacency) share an incident | Correlation |
+| Change signals never merge incidents (removing them leaves the symptom grouping unchanged) | Correlation |
+| Blast radius is in 0–100, equals the capped sum of its factors, and is deterministic | Blast radius |
+| An enforced plan keeps only permitted, de-duplicated actions, with approval flags from the policy; everything else is recorded as rejected | Policy |
+
+A deliberately broken correlator (an extra link condition) is caught by these tests, which confirms they are not vacuous.
 
 Edge cases covered include:
 - **Input files:** replacements in the repo root override `data/` per file; a notice appears only when the override differs; root-only layout; a file missing from both locations; an incomplete `--input-dir`; an input changed after the run.
@@ -541,6 +580,8 @@ Edge cases covered include:
 - **Review:** invalid incident, action or urgency; last decision wins; a downgrade voids an approval; an upgrade unlocks an action as pending; decision order does not matter; EOF without a blank line.
 - **LLM gateway:** schema violation then retry; semantic failure; provider exception; LLM call before correlation; replay cache miss; logical names resolved to real paths and sections.
 - **OpenAI adapter:** temperature fallback; refusal; a 401 error propagates.
+- **LLM provider:** offline runs are flagged in the console, manifest, log and Markdown; `--require-llm` fails them; an LLM provider passes with no warning.
+- **Published schemas:** committed files match the code and are valid draft 2020-12; real artifacts pass a third-party validator; missing fields, empty lists, unknown enum values, out-of-range scores and bad log timestamps fail both validators.
 - **Validator:** detects an edited brief, changed inputs, a missing Stage 2 record, a disallowed action, tampered decisions, a missing artifact, a logged artifact path that does not exist and a corrupt manifest.
 - **Replaced fixtures:** renamed services, a new region, new class names, `P1–P3` urgencies and an action with no policy entry.
 
@@ -556,6 +597,7 @@ Edge cases covered include:
 | `IRP_CORRELATION_WINDOW_S` / `--window` | env / CLI | `120` |
 | `IRP_ORDER_PATH_PATTERN` | env | `order\|execution\|routing\|router` |
 | `IRP_OPERATOR` | env | OS user |
+| `--require-llm` | `irp validate` (`REQUIRE_LLM=1` in make) | off: a non-LLM run is a WARN, not a FAIL |
 | `--input-dir` / `--out-dir` | CLI (`-i`/`-o` in scripts, `DATA_DIR`/`OUT_DIR` in make) | auto per file (repo root, else `data/`) / `data/output` |
 | `--decisions-file`, `--replay`, `--strict`, `--skip-optional` | CLI | — |
 
@@ -564,7 +606,9 @@ make setup                                   # uv sync --group dev
 make run                                     # interactive review (OpenAI if key present)
 make run-scripted PROVIDER=offline           # scripted review, no network
 make replay                                  # cached LLM responses, same decisions
-make validate                                # 22 checks, exit 1 on failure
+make validate                                # 24 checks, exit 1 on failure
+make validate REQUIRE_LLM=1                  # also fail if the AI stages did not use a real LLM
+make schemas                                 # regenerate schemas/ (irp schemas --check only reports drift)
 make test / make coverage
 make start | start-bg | stop | status | restart     # MODE=…, PROVIDER=…, DECISIONS=…, DATA_DIR=…, OUT_DIR=…
 
@@ -593,6 +637,9 @@ scripts/restart.sh [start options]
 | Stage machine | — | `domain/pipeline_stage.py`, `application/pipeline.py` |
 | `llm_calls.jsonl` | UC-11 | `application/llm_gateway.py` |
 | Validation command | UC-11 | `application/validation.py`, `validate.py`, `make validate` |
+| "Policy-constrained LLM analysis" (no silent non-LLM runs) | UC-03, UC-04, UC-06, UC-11 | `LanguageModel.is_llm`, pipeline warning banner, `provider_is_llm` in `llm_calls.jsonl`, validator check "AI stages were answered by a real LLM", `--require-llm` |
+| Required artifact formats | UC-11 | `application/artifact_schemas.py`, `schemas/*.schema.json`, validator check "artifacts conform to the published JSON Schemas" |
+| Deterministic normalisation and correlation on any equivalent input | UC-01, UC-02, UC-07, UC-12 | `tests/property/test_deterministic_properties.py` (Hypothesis) |
 | Input files read from disk; replaced fixtures | UC-01, UC-12 | `infrastructure/input_locator.py` (repo root > `data/`, per file), `FileSystemInputSource`, `tests/integration/test_evaluator_scenarios.py` |
 | `llm_calls.jsonl` `input_artifacts` / `output_artifact` as paths | UC-11 | `AuditedLLMGateway._resolve_artifacts`, validator check "artifact paths exist on disk" |
 | Clean-checkout re-run | UC-12 | `pipeline.run()` stale-artifact purge, `tests/integration/test_replaced_fixtures.py`, CI end-to-end job |

@@ -12,6 +12,7 @@ class FakeModel:
 
     name = "fake"
     model = "fake-1"
+    is_llm = True
 
     def __init__(self, responses: list[Any] | Callable[[LLMRequest], Any]) -> None:
         self._responses = responses

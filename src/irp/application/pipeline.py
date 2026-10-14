@@ -36,6 +36,14 @@ GENERATED_ARTIFACTS = (
 )
 
 
+NON_LLM_WARNING = (
+    "WARNING: the AI stages (Stage 1-3 and the optional narratives) are answered by '{label}', "
+    "a rule-based stand-in, NOT a language model. "
+    "The run is valid for checking the pipeline mechanics only. Set OPENAI_API_KEY (or pass --provider openai) "
+    "for policy-constrained LLM analysis; `make validate REQUIRE_LLM=1` fails runs like this one."
+)
+
+
 class PipelineSettings(BaseModel):
     correlation_window_s: int = 120
     strict_normalization: bool = False
@@ -81,6 +89,11 @@ class IncidentResponsePipeline:
     def _log(self, text: str) -> None:
         self._console.show(f"[irp] {text}")
 
+    def _warn_if_not_llm(self, gateway: AuditedLLMGateway) -> None:
+        if not gateway.uses_llm:
+            bar = "!" * 100
+            self._console.show("\n".join([bar, NON_LLM_WARNING.format(label=f"{gateway.provider_name}:{gateway.model_name}"), bar]))
+
     # -- run ------------------------------------------------------------------------
     def run(self) -> PipelineResult:
         """Run all stages. An interruption (Ctrl-C / SIGTERM from ``scripts/stop.sh``) or an error is
@@ -108,10 +121,12 @@ class IncidentResponsePipeline:
         gateway = AuditedLLMGateway(self._model, self._store, self._clock, self._stages, replay=self._settings.replay,
                                     artifact_path=self._artifact_path)
         self._manifest = {"run_started_at": self._clock.now(), "settings": self._settings.model_dump(),
-                          "llm_provider": {"provider": self._model.name, "model": self._model.model}, "inputs": {},
+                          "llm_provider": {"provider": self._model.name, "model": self._model.model, "is_llm": self._model.is_llm},
+                          "inputs": {},
                           "stages": [t.model_dump(mode="json") for t in self._stages.history]}
         self._store.save_json(MANIFEST, self._manifest)
         self._log(f"LLM provider: {gateway.provider_label}")
+        self._warn_if_not_llm(gateway)
 
         # 1. Inputs from disk
         inputs = self._inputs.load()
@@ -197,9 +212,13 @@ class IncidentResponsePipeline:
         self._advance(Stage.VALIDATION_COMPLETE, (), checks=len(results), failed=[r.name for r in failed])
         for r in failed:
             self._log(f"VALIDATION FAIL: {r.name}: {r.detail}")
+        for r in results:
+            if r.warning:
+                self._log(f"VALIDATION WARN: {r.name}: {r.detail}")
         status = "ok" if not failed else "validation_failed"
         self._advance(Stage.RESULTS_FINALISED, (), status=status)
         self._log(f"done — {len(results) - len(failed)}/{len(results)} validation checks passed. "
                   f"Brief: {self._store.location('incident_brief.md')}")
+        self._warn_if_not_llm(gateway)
         return PipelineResult(status=status, validation=results, incident_ids=[i.incident_id for i in incidents],
                               brief_location=self._store.location("incident_brief.md"))

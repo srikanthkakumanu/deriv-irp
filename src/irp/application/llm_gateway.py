@@ -46,6 +46,7 @@ class LLMCallRecord(BaseModel):
     timestamp: str
     provider: str
     model: str
+    provider_is_llm: bool
     prompt_hash: str
     input_artifacts: list[str]
     output_artifact: str
@@ -74,7 +75,12 @@ class AuditedLLMGateway:
 
     @property
     def provider_label(self) -> str:
-        return f"{self._model.name}:{self._model.model}" + (" (replay)" if self._replay else "")
+        return (f"{self._model.name}:{self._model.model}" + (" (replay)" if self._replay else "")
+                + ("" if self.uses_llm else " [rule-based stand-in, NOT an LLM]"))
+
+    @property
+    def uses_llm(self) -> bool:
+        return self._model.is_llm
 
     @property
     def provider_name(self) -> str:
@@ -148,7 +154,7 @@ class AuditedLLMGateway:
         record = LLMCallRecord(
             call_id=call_id, stage=task.stage, incident_id=task.incident_id, timestamp=self._clock.now(),
             provider=self._model.name + (" (replay)" if self._replay else ""), model=self._model.model,
-            prompt_hash=prompt_hash, input_artifacts=input_paths, output_artifact=output_path,
+            provider_is_llm=self._model.is_llm, prompt_hash=prompt_hash, input_artifacts=input_paths, output_artifact=output_path,
             input_sections=input_sections, output_section=output_section,
             pipeline_stage_at_call=self._stages.current.value, attempts=attempts,
             status="ok" if result is not None else "failed",

@@ -62,10 +62,14 @@ class LLMRequest(BaseModel):
 
 @runtime_checkable
 class LanguageModel(Protocol):
-    """A provider that returns JSON matching ``request.response_schema``."""
+    """A provider that returns JSON matching ``request.response_schema``.
+
+    ``is_llm`` is False for stand-ins that are not a language model (the offline
+    rule-based provider); runs made with one are flagged by the pipeline and validator."""
 
     name: str
     model: str
+    is_llm: bool
 
     def complete(self, request: LLMRequest) -> dict[str, Any]: ...
 

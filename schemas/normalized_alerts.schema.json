@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "normalized_alerts.schema.json",
+  "title": "Normalized alerts (REQUIREMENT step 1)",
+  "description": "Contract for normalized_alerts.json",
+  "$defs": {
+    "NormalizedAlert": {
+      "additionalProperties": true,
+      "properties": {
+        "alert_id": {
+          "minLength": 1,
+          "title": "Alert Id",
+          "type": "string"
+        },
+        "ts": {
+          "description": "UTC, ISO-8601 with Z suffix",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+          "title": "Ts",
+          "type": "string"
+        },
+        "service": {
+          "title": "Service",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "observed_value": {
+          "title": "Observed Value",
+          "type": "number"
+        },
+        "threshold": {
+          "title": "Threshold",
+          "type": "number"
+        },
+        "delta_from_threshold": {
+          "description": "observed_value - threshold",
+          "title": "Delta From Threshold",
+          "type": "number"
+        },
+        "region": {
+          "title": "Region",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alert_id",
+        "ts",
+        "service",
+        "severity",
+        "metric",
+        "observed_value",
+        "threshold",
+        "delta_from_threshold",
+        "region",
+        "message"
+      ],
+      "title": "NormalizedAlert",
+      "type": "object"
+    }
+  },
+  "items": {
+    "$ref": "#/$defs/NormalizedAlert"
+  },
+  "minItems": 1,
+  "type": "array"
+}

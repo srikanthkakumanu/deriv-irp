@@ -44,6 +44,7 @@ def _class_keywords(cls: str) -> set[str]:
 class OfflineModel:
     name = "offline-deterministic"
     model = "rule-based-v1"
+    is_llm = False  # a rule-based stand-in, not a language model
 
     def complete(self, request: LLMRequest) -> dict[str, Any]:
         stage, payload = request.stage, request.payload

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "policy_simulation.schema.json",
+  "title": "What-if policy simulation (REQUIREMENT step 10)",
+  "description": "Contract for policy_simulation.json",
+  "$defs": {
+    "ActionSets": {
+      "additionalProperties": true,
+      "properties": {
+        "recommended": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Recommended",
+          "type": "array"
+        },
+        "pending": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pending",
+          "type": "array"
+        }
+      },
+      "required": [
+        "recommended",
+        "pending"
+      ],
+      "title": "ActionSets",
+      "type": "object"
+    },
+    "SimulationScenario": {
+      "additionalProperties": true,
+      "properties": {
+        "scenario": {
+          "title": "Scenario",
+          "type": "string"
+        },
+        "before": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ActionSets"
+          },
+          "title": "Before",
+          "type": "object"
+        },
+        "after": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ActionSets"
+          },
+          "title": "After",
+          "type": "object"
+        },
+        "diff": {
+          "additionalProperties": true,
+          "title": "Diff",
+          "type": "object"
+        }
+      },
+      "required": [
+        "scenario",
+        "before",
+        "after",
+        "diff"
+      ],
+      "title": "SimulationScenario",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "computed_by": {
+      "const": "deterministic_code",
+      "title": "Computed By",
+      "type": "string"
+    },
+    "llm_calls": {
+      "const": 0,
+      "title": "Llm Calls",
+      "type": "integer"
+    },
+    "scenarios": {
+      "items": {
+        "$ref": "#/$defs/SimulationScenario"
+      },
+      "minItems": 2,
+      "title": "Scenarios",
+      "type": "array"
+    }
+  },
+  "required": [
+    "computed_by",
+    "llm_calls",
+    "scenarios"
+  ],
+  "type": "object"
+}

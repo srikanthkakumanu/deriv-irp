@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "operator_decisions.schema.json",
+  "title": "Operator decisions and post-review state (REQUIREMENT step 5)",
+  "description": "Contract for operator_decisions.json",
+  "$defs": {
+    "FinalAction": {
+      "additionalProperties": true,
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "approved",
+            "auto_cleared_by_policy",
+            "pending_approval",
+            "rejected",
+            "invalidated_by_override"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "requires_human_approval": {
+          "title": "Requires Human Approval",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action",
+        "status",
+        "requires_human_approval"
+      ],
+      "title": "FinalAction",
+      "type": "object"
+    },
+    "FinalIncidentState": {
+      "additionalProperties": true,
+      "properties": {
+        "incident_class": {
+          "title": "Incident Class",
+          "type": "string"
+        },
+        "original_urgency": {
+          "title": "Original Urgency",
+          "type": "string"
+        },
+        "final_urgency": {
+          "title": "Final Urgency",
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/FinalAction"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "final_approved_action_set": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Final Approved Action Set",
+          "type": "array"
+        },
+        "pending_actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pending Actions",
+          "type": "array"
+        },
+        "rejected_actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Rejected Actions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "incident_class",
+        "original_urgency",
+        "final_urgency",
+        "actions",
+        "final_approved_action_set",
+        "pending_actions",
+        "rejected_actions"
+      ],
+      "title": "FinalIncidentState",
+      "type": "object"
+    },
+    "OperatorDecision": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "enum": [
+            "approve",
+            "reject",
+            "urgency"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action"
+        },
+        "to_urgency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To Urgency"
+        }
+      },
+      "required": [
+        "type",
+        "incident_id"
+      ],
+      "title": "OperatorDecision",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "operator": {
+      "title": "Operator",
+      "type": "string"
+    },
+    "prompt_shown": {
+      "title": "Prompt Shown",
+      "type": "string"
+    },
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/OperatorDecision"
+      },
+      "title": "Decisions",
+      "type": "array"
+    },
+    "final_state": {
+      "additionalProperties": {
+        "$ref": "#/$defs/FinalIncidentState"
+      },
+      "description": "post-review state per incident_id; Stage 3 input",
+      "title": "Final State",
+      "type": "object"
+    },
+    "stage3_input_digest": {
+      "minLength": 1,
+      "title": "Stage3 Input Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operator",
+    "prompt_shown",
+    "decisions",
+    "final_state",
+    "stage3_input_digest"
+  ],
+  "type": "object"
+}

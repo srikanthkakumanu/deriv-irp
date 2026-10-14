@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 from ..domain.pipeline_stage import Stage
 from ..domain.policy import RunbookPolicy
 from ..domain.review import IncidentFinalState
+from .artifact_schemas import ARTIFACT_CONTRACTS, conformance_problems
 from .contracts import LEDGER_HEADING
 from .documents import OperatorDecisionsDocument
 from .use_cases.generate_brief import brief_consistency_problems
@@ -37,18 +38,25 @@ class CheckResult(BaseModel):
     name: str
     ok: bool
     detail: str = ""
+    warning: bool = False  # passed, but needs attention (never set on a failure)
 
 
 class _Skip(Exception):
     pass
 
 
+class _Warn(Exception):
+    pass
+
+
 class RunValidator:
-    def __init__(self, artifacts: Any, inputs: Any, during_run: bool = False) -> None:
-        """``artifacts``: ArtifactStore for outputs; ``inputs``: ArtifactStore rooted at the input dir."""
+    def __init__(self, artifacts: Any, inputs: Any, during_run: bool = False, require_llm: bool = False) -> None:
+        """``artifacts``: ArtifactStore for outputs; ``inputs``: ArtifactStore rooted at the input dir.
+        ``require_llm``: fail (instead of warn) when the AI stages were answered by a non-LLM stand-in."""
         self._out = artifacts
         self._in = inputs
         self._during_run = during_run
+        self._require_llm = require_llm
         self._cache: dict[str, Any] = {}
 
     # -- loading helpers ---------------------------------------------------------
@@ -86,6 +94,8 @@ class RunValidator:
                 results.append(CheckResult(name=name, ok=True, detail=detail))
             except _Skip as exc:
                 results.append(CheckResult(name=name, ok=True, detail=f"skipped: {exc}"))
+            except _Warn as exc:
+                results.append(CheckResult(name=name, ok=True, detail=str(exc), warning=True))
             except (AssertionError, ValidationError, KeyError, ValueError, FileNotFoundError, TypeError) as exc:
                 results.append(CheckResult(name=name, ok=False, detail=f"{type(exc).__name__}: {exc}"))
         return results
@@ -94,6 +104,7 @@ class RunValidator:
         return [
             ("required artifacts exist", self.check_required_exist),
             ("JSON artifacts are valid", self.check_json_valid),
+            ("artifacts conform to the published JSON Schemas", self.check_artifact_schemas),
             ("input files were read from disk (hashes match)", self.check_inputs_read),
             ("normalized alerts have the required schema", self.check_normalized_schema),
             ("correlated incidents have the required schema", self.check_incident_schema),
@@ -112,6 +123,7 @@ class RunValidator:
             ("incident brief reflects post-review urgencies and actions", self.check_brief),
             ("llm_calls.jsonl has separate records for required stages", self.check_llm_log),
             ("llm_calls.jsonl artifact paths exist on disk", self.check_llm_artifact_paths),
+            ("AI stages were answered by a real LLM", self.check_llm_provider),
             ("blast radius scores are valid", self.check_blast_radius),
             ("policy simulation is valid", self.check_simulation),
         ]
@@ -145,6 +157,17 @@ class RunValidator:
         unreported = [i for i in bad if i not in rejected]
         assert not unreported, f"alerts.jsonl lines {unreported} are invalid JSON and were not reported as rejected"
         return f"{checked} JSON files + 2 JSONL files parsed" + (f"; {len(bad)} malformed alert row(s) reported as rejected" if bad else "")
+
+    def check_artifact_schemas(self) -> str:
+        checked: list[str] = []
+        problems: list[str] = []
+        for contract in ARTIFACT_CONTRACTS:
+            if not self._out.exists(contract.artifact):
+                continue  # presence is checked by "required artifacts exist"
+            problems += conformance_problems(contract, self._out.read_text(contract.artifact))
+            checked.append(contract.artifact)
+        assert not problems, "; ".join(problems[:5]) + (f" (+{len(problems) - 5} more)" if len(problems) > 5 else "")
+        return f"{len(checked)} artifacts match schemas/ ({', '.join(checked)})"
 
     def check_inputs_read(self) -> str:
         manifest = self._json("run_manifest.json")
@@ -363,6 +386,19 @@ class RunValidator:
                 assert Path(path).is_file(), f"{c['call_id']}: logged artifact path does not exist: {path}"
                 checked += 1
         return f"{checked} logged paths exist"
+
+    def check_llm_provider(self) -> str:
+        stand_ins = [c for c in self._calls if c.get("provider_is_llm") is not True]
+        manifest_is_llm = self._json("run_manifest.json").get("llm_provider", {}).get("is_llm", True)
+        providers = sorted({f"{c['provider']}:{c['model']}" for c in self._calls})
+        if not stand_ins and manifest_is_llm:
+            return f"{len(self._calls)} calls answered by {', '.join(providers)}"
+        names = sorted({f"{c['provider']}:{c['model']}" for c in stand_ins}) or providers
+        message = (f"{len(stand_ins)}/{len(self._calls)} AI calls were answered by {', '.join(names)}, "
+                   f"a rule-based stand-in, not an LLM")
+        if self._require_llm:
+            raise AssertionError(message + " (--require-llm)")
+        raise _Warn(message + "; re-run with --provider openai for policy-constrained LLM analysis")
 
     def check_blast_radius(self) -> str:
         if not self._out.exists("blast_radius_scores.json"):

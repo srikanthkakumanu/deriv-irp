@@ -93,9 +93,9 @@ Supporting behaviours take the priority of the use case they belong to. For exam
 
 ### UC-11 Audit & validate a run. Actor: P3
 - **Priority:** Mandatory: Validation Requirements and `llm_calls.jsonl` requirements
-- **Happy path:** 1) P3 runs the validation command. 2) The system checks artifact presence and validity, that the input files the run actually used are unchanged, stage order, policy compliance, one plan per incident, that decisions were applied, the briefing's consistency and the AI interaction log, including that every artifact it references exists. 3) It reports pass/fail for each check.
-- **Exception:** any check fails → non-zero result, naming the failing check.
-- **AC:** *Given* a completed run *When* validation runs *Then* every requirement check passes or the failures are named.
+- **Happy path:** 1) P3 runs the validation command. 2) The system checks artifact presence and validity, that every output matches its published format, that the input files the run actually used are unchanged, stage order, policy compliance, one plan per incident, that decisions were applied, the briefing's consistency, the AI interaction log (including that every artifact it references exists) and whether a real AI service answered the AI-assisted steps. 3) It reports pass, warning or fail for each check.
+- **Exception:** any check fails → non-zero result, naming the failing check. The AI-assisted steps were answered by the rule-based fallback → a warning naming it, or a failure when P3 asks for a real AI run.
+- **AC:** *Given* a completed run *When* validation runs *Then* every requirement check passes or the failures are named. *Given* a run made with the rule-based fallback *When* P3 validates it requiring a real AI run *Then* validation fails. *Given* the published output formats *When* P3 checks the outputs with an independent tool *Then* they conform.
 
 ### UC-12 Replay with replaced inputs. Actor: P3
 - **Priority:** Mandatory: Execution Requirements and the "replayable" BUILD statement
@@ -118,7 +118,7 @@ Supporting behaviours take the priority of the use case they belong to. For exam
 | M4 | Retaining intermediate artifacts; AI interaction log; validation command; automation plan; postmortem; what-if simulation; replay (stored AI responses are reused only to reproduce a run); run lifecycle control for a single run: start in the foreground or background, monitor, stop (UC-08 to UC-13) | Automatic paging or status-page publishing; ticketing integration; running as a long-lived or self-restarting service; run history, trends or cross-run deduplication | Recommendations only; no outward-facing actions; each run stands alone |
 
 ## Self-Check Findings
-> Status: every proposed default was accepted on 2026-10-14. The two findings marked *(2026-10-15)* came from the requirements cross-check and were resolved the same way. Every finding is **resolved** and implemented as described in [`IMPLEMENTATION_SPEC.md`](IMPLEMENTATION_SPEC.md).
+> Status: every proposed default was accepted on 2026-10-14. The findings marked *(2026-10-15)* came from the requirements cross-check and the design review, and were resolved the same way. Every finding is **resolved** and implemented as described in [`IMPLEMENTATION_SPEC.md`](IMPLEMENTATION_SPEC.md).
 
 | Type | Description | Ref | Resolution (confirmed) |
 |---|---|---|---|
@@ -134,4 +134,6 @@ Supporting behaviours take the priority of the use case they belong to. For exam
 | Gap | Behaviour when the AI service is unavailable or not configured is unspecified, but the evaluator must be able to run the workflow end to end. | UC-03, UC-04, UC-06, UC-12 | Fall back to a rule-based analyser that follows the same contract and is logged as such |
 | Gap *(2026-10-15)* | The source says the evaluator "may replace" the three input files but not *where* they will be placed. With the samples bundled in a data folder, replacements put in the repository root could be silently ignored, so validation would pass against the wrong data. | UC-01, UC-11, UC-12 | Each file is located independently: a repository-root copy takes precedence over the bundled sample. The copy used is reported and recorded, and validation checks exactly those files. |
 | Gap *(2026-10-15)* | The AI interaction log must list input and output artifacts as "paths", but a call may read or write only one part of a shared artifact (e.g. one incident's plan). | UC-11 | Log real file paths that exist, and name the part of the file separately. Validation confirms every logged path exists. |
+| Framing *(2026-10-15)* | The rule-based fallback (accepted above) keeps the workflow runnable without an AI service, but its output is not the "policy-constrained LLM analysis" the source asks for. A reviewer who runs without AI credentials could mistake a fallback run for a real one. | UC-03, UC-04, UC-06, UC-11 | Fallback runs are flagged in the run output, the run records and the generated documents. Validation reports a warning, or a failure when the reviewer asks for a real AI run. |
+| Gap *(2026-10-15)* | The source gives the required output formats only as examples, so a reviewer cannot check the outputs independently of the system that produced them. | UC-11 | The output formats are published in a machine-readable form that standard tools can check, and validation checks every run against them. |
 | Coverage | All in-scope rows trace to ≥1 use case (M1→UC-01/02, M2→UC-03/04/07, M3→UC-05/06, M4→UC-08 to UC-13). | All | No orphans |
