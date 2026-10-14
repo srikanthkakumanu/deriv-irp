@@ -325,7 +325,7 @@ flowchart TD
     F --> H
     G --> H
     H --> I[22 PASS/FAIL checks · exit code 0 or 1]
-    I --> J[Inspect llm_calls.jsonl, llm_raw/,<br/>run_manifest.json (input origins), operator_decisions.json]
+    I --> J["Inspect llm_calls.jsonl, llm_raw/,<br/>run_manifest.json (input origins), operator_decisions.json"]
 ```
 
 ---
