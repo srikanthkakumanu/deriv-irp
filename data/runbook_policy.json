@@ -1,0 +1,66 @@
+{
+  "incident_classes": [
+    "market_data_degradation",
+    "pricing_staleness",
+    "order_execution_risk",
+    "edge_api_instability",
+    "ai_inference_degradation",
+    "deployment_related_change",
+    "unknown"
+  ],
+  "urgency_levels": ["sev0", "sev1", "sev2", "sev3"],
+  "allowed_actions": [
+    "page_primary_oncall",
+    "page_platform_lead",
+    "freeze_deployments",
+    "rollback_latest_change",
+    "shift_traffic_region",
+    "disable_ai_assist_path",
+    "switch_to_cached_quotes",
+    "throttle_non_critical_requests",
+    "collect_additional_diagnostics",
+    "open_status_page_draft"
+  ],
+  "action_policies": {
+    "switch_to_cached_quotes": {
+      "requires_human_approval": true,
+      "max_allowed_if": ["pricing_staleness", "market_data_degradation"]
+    },
+    "shift_traffic_region": {
+      "requires_human_approval": true,
+      "max_allowed_if": ["edge_api_instability", "market_data_degradation"]
+    },
+    "rollback_latest_change": {
+      "requires_human_approval": true,
+      "max_allowed_if": ["deployment_related_change", "edge_api_instability", "ai_inference_degradation"]
+    },
+    "disable_ai_assist_path": {
+      "requires_human_approval": true,
+      "max_allowed_if": ["ai_inference_degradation"]
+    },
+    "freeze_deployments": {
+      "requires_human_approval": false,
+      "max_allowed_if": ["deployment_related_change", "order_execution_risk", "pricing_staleness", "market_data_degradation"]
+    },
+    "page_primary_oncall": {
+      "requires_human_approval": false,
+      "max_allowed_if": ["market_data_degradation", "pricing_staleness", "order_execution_risk", "edge_api_instability", "ai_inference_degradation", "deployment_related_change", "unknown"]
+    },
+    "page_platform_lead": {
+      "requires_human_approval": false,
+      "max_allowed_if": ["sev0", "sev1"]
+    },
+    "throttle_non_critical_requests": {
+      "requires_human_approval": true,
+      "max_allowed_if": ["edge_api_instability", "ai_inference_degradation"]
+    },
+    "collect_additional_diagnostics": {
+      "requires_human_approval": false,
+      "max_allowed_if": ["market_data_degradation", "pricing_staleness", "order_execution_risk", "edge_api_instability", "ai_inference_degradation", "deployment_related_change", "unknown"]
+    },
+    "open_status_page_draft": {
+      "requires_human_approval": false,
+      "max_allowed_if": ["sev0", "sev1", "sev2"]
+    }
+  }
+}

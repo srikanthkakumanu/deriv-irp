@@ -1,0 +1,8 @@
+# Scripted operator review (replayable). Lines starting with '#' are ignored.
+# Approve the AI-inference kill switch, reject the risky quote fallback,
+# and downgrade the AI incident (this invalidates urgency-gated actions).
+approve INC-002 disable_ai_assist_path
+reject INC-001 switch_to_cached_quotes
+approve INC-001 rollback_latest_change
+urgency INC-002 sev3
+

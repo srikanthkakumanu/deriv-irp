@@ -1,0 +1,10 @@
+{
+  "services": [
+    {"name": "market-data-gateway", "depends_on": [], "tier": "critical_path"},
+    {"name": "pricing-engine", "depends_on": ["market-data-gateway"], "tier": "critical_path"},
+    {"name": "order-router", "depends_on": ["pricing-engine", "api-edge"], "tier": "critical_path"},
+    {"name": "api-edge", "depends_on": [], "tier": "edge"},
+    {"name": "feature-store", "depends_on": [], "tier": "ai_support"},
+    {"name": "model-serving", "depends_on": ["feature-store"], "tier": "ai_support"}
+  ]
+}

@@ -1,0 +1,1 @@
+TASK: Postmortem inference for ONE incident. Using the incident, its alerts, the classification, the remediation plan and the operator's final decisions, list probable contributing factors and prevention ideas across architecture, observability and process. Be specific to the evidence; if something is speculative, say so. These are hypotheses, not facts.

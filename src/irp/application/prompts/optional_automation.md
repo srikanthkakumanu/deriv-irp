@@ -1,0 +1,1 @@
+TASK: Given the deterministic action tiers, the policy and this run's final decisions, write a short narrative (150 words or fewer) on how to expand automation safely. Do not change the tiers. Be conservative: market-risk actions stay human-gated.

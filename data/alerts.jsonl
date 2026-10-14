@@ -1,0 +1,10 @@
+{"ts":"2026-03-03T09:00:00Z","service":"market-data-gateway","severity":"warning","metric":"tick_ingest_lag_ms","value":180,"threshold":120,"region":"eu-west-1","message":"Tick ingestion lag above threshold"}
+{"ts":"2026-03-03T09:00:08Z","service":"market-data-gateway","severity":"critical","metric":"tick_ingest_lag_ms","value":420,"threshold":120,"region":"eu-west-1","message":"Tick ingestion lag spiking"}
+{"ts":"2026-03-03T09:00:10Z","service":"pricing-engine","severity":"critical","metric":"quote_freshness_ms_p95","value":950,"threshold":250,"region":"eu-west-1","message":"Quote freshness degraded"}
+{"ts":"2026-03-03T09:00:12Z","service":"order-router","severity":"critical","metric":"order_reject_rate_pct","value":7.2,"threshold":1.0,"region":"eu-west-1","message":"Order rejects increased"}
+{"ts":"2026-03-03T09:00:15Z","service":"api-edge","severity":"warning","metric":"http_5xx_rate_pct","value":2.8,"threshold":1.0,"region":"eu-west-1","message":"5xx elevated"}
+{"ts":"2026-03-03T09:00:18Z","service":"feature-store","severity":"warning","metric":"feature_fetch_latency_ms_p95","value":180,"threshold":100,"region":"eu-west-1","message":"Feature latency elevated"}
+{"ts":"2026-03-03T09:00:20Z","service":"model-serving","severity":"warning","metric":"inference_latency_ms_p95","value":310,"threshold":180,"region":"eu-west-1","message":"Inference latency elevated"}
+{"ts":"2026-03-03T09:00:22Z","service":"model-serving","severity":"warning","metric":"gpu_memory_utilization_pct","value":96,"threshold":90,"region":"eu-west-1","message":"GPU memory pressure high"}
+{"ts":"2026-03-03T09:00:25Z","service":"market-data-gateway","severity":"critical","metric":"packet_drop_rate_pct","value":4.4,"threshold":0.5,"region":"eu-west-1","message":"Packet loss detected upstream"}
+{"ts":"2026-03-03T09:00:29Z","service":"api-edge","severity":"info","metric":"deploy_event","value":1,"threshold":0,"region":"eu-west-1","message":"Canary deployment started for edge cache refresh"}
