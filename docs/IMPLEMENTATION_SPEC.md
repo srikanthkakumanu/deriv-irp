@@ -135,7 +135,7 @@ data/                  # inputs: alerts.jsonl, service_topology.json, runbook_po
 └── output/            # all generated artifacts, llm_raw/, llm_cache/ (git-ignored)
 scripts/               # start.sh · stop.sh · status.sh · restart.sh
 fixtures/              # sample_decisions.txt (scripted operator review)
-docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (this file)
+docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (this file) · TEST_SUMMARY.md
 ```
 
 ### 3.1 Domain layer (`src/irp/domain`)
@@ -507,6 +507,8 @@ Runtime dependencies are `openai` and `pydantic` only.
 ---
 
 ## 11. Testing Strategy
+
+Latest results: [`TEST_SUMMARY.md`](TEST_SUMMARY.md).
 
 ```
 tests/

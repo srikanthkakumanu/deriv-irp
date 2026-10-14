@@ -1,5 +1,7 @@
 # Incident-Response Orchestration Pipeline
 
+[![CI](https://github.com/srikanthkakumanu/deriv-irp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/srikanthkakumanu/deriv-irp/actions/workflows/ci.yml)
+
 A replayable, policy-gated incident-response control plane for a trading platform. It works in five steps:
 
 1. Ingest telemetry from disk.
@@ -15,6 +17,7 @@ A replayable, policy-gated incident-response control plane for a trading platfor
 | [`docs/REQUIREMENT.md`](docs/REQUIREMENT.md) | Original challenge |
 | [`docs/BRD.md`](docs/BRD.md) | Personas, use cases, scope, resolved ambiguities |
 | [`docs/IMPLEMENTATION_SPEC.md`](docs/IMPLEMENTATION_SPEC.md) | Architecture, workflows, layers, tech stack, out of scope |
+| [`docs/TEST_SUMMARY.md`](docs/TEST_SUMMARY.md) | Test results: pytest, coverage, validation checks, live/replay/offline runs |
 
 ## Quick start
 
@@ -109,7 +112,7 @@ src/irp/
 ├── interface/       # CLI (irp run / irp validate), terminal and scripted operator consoles
 └── bootstrap.py     # composition root
 scripts/             # start.sh · stop.sh · status.sh · restart.sh (+ _common.sh helpers)
-docs/                # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md
+docs/                # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md · TEST_SUMMARY.md
 ```
 
 Pipeline stages (enforced; out-of-order transitions raise):
@@ -158,7 +161,18 @@ Each run deletes the previous generated artifacts in `data/output/` first, then 
 | `safe_automation_plan.md`, `postmortem_template.md`, `policy_simulation.json` | optional outputs |
 | `llm_calls.jsonl`, `llm_raw/`, `llm_cache/`, `run_manifest.json` | audit trail and replay (`run_manifest.json` gains a `termination` record if the run was stopped or failed) |
 
-## Configuration
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request to `main`, and can also be started manually (**Actions → CI → Run workflow**).
+
+| Job | When | What it does |
+|---|---|---|
+| **Tests** (Python 3.11 / 3.12 / 3.13) | always | `uv sync --locked`, byte-compile, shell-script syntax check, pytest with coverage (fails below 95%); uploads `junit.xml` and `coverage.xml` |
+| **End-to-end pipeline (offline model)** | after Tests | `make run-scripted PROVIDER=offline`, `make validate`, `make replay` + validate, start/status/stop script smoke test; uploads `data/output/` (except `llm_raw/`) |
+| **End-to-end pipeline (live OpenAI)** | manual run with **live_openai** ticked | same run against OpenAI and validate. Needs the `OPENAI_API_KEY` repository secret (optional `OPENAI_MODEL` variable) and incurs API cost. |
+
+CI needs no secrets by default: the offline deterministic model covers the full pipeline.
+
 
 | Variable | Default |
 |---|---|

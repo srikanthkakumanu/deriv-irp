@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      live_openai:
+        description: "Also run the pipeline against live OpenAI (needs the OPENAI_API_KEY repository secret; incurs API cost)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_LOCKED: "1"            # fail if uv.lock is out of date with pyproject.toml
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Byte-compile sources
+        run: uv run python -m compileall -q src tests validate.py
+
+      - name: Shell script syntax
+        run: for f in scripts/*.sh; do bash -n "$f"; done
+
+      - name: Run pytest with coverage
+        run: >
+          uv run --group dev pytest -q
+          --cov=irp --cov-report=term --cov-report=xml:coverage.xml
+          --junitxml=junit.xml --cov-fail-under=95
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-py${{ matrix.python-version }}
+          path: |
+            junit.xml
+            coverage.xml
+          if-no-files-found: ignore
+
+  pipeline-e2e:
+    name: End-to-end pipeline (offline model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run pipeline (scripted operator review, offline model)
+        run: make run-scripted PROVIDER=offline
+
+      - name: Validate artifacts (21 requirement checks)
+        run: make validate
+
+      - name: Replay from cached LLM responses (no network)
+        run: make replay PROVIDER=offline && make validate
+
+      - name: Start / status / stop scripts smoke test
+        run: |
+          scripts/start.sh -m scripted -p offline -b
+          scripts/status.sh
+          scripts/stop.sh
+          scripts/status.sh
+
+      - name: Upload pipeline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-artifacts-offline
+          path: |
+            data/output/
+            !data/output/llm_raw/
+            .run/irp.log
+          if-no-files-found: warn
+
+  pipeline-live-openai:
+    name: End-to-end pipeline (live OpenAI, opt-in)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: tests
+    if: github.event_name == 'workflow_dispatch' && inputs.live_openai
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Check secret is configured
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::OPENAI_API_KEY secret is not set (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+
+      - name: Run pipeline against OpenAI
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1' }}
+        run: make run-scripted PROVIDER=openai
+
+      - name: Validate artifacts
+        run: make validate
+
+      - name: Upload pipeline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-artifacts-openai
+          path: |
+            data/output/
+            !data/output/llm_raw/
+          if-no-files-found: warn
