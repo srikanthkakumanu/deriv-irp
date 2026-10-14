@@ -17,6 +17,7 @@ class InputProvenance(BaseModel):
     sha256: str
     bytes: int
     read_at: str
+    origin: str = "explicit"  # explicit | repo_root | data_dir
 
 
 class PipelineInputs(BaseModel):
@@ -27,6 +28,7 @@ class PipelineInputs(BaseModel):
     raw_topology: dict[str, Any]
     raw_policy: dict[str, Any]
     provenance: dict[str, InputProvenance]
+    notices: tuple[str, ...] = ()
 
 
 class InputSource(Protocol):

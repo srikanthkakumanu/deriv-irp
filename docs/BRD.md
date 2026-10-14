@@ -19,76 +19,106 @@
 
 ## Use Cases
 
+Priorities follow the tiers in [`REQUIREMENT.md`](REQUIREMENT.md):
+
+| Priority | Meaning | Use cases |
+|---|---|---|
+| **Must Complete** | "MUST COMPLETE" steps 1–6 | UC-01 to UC-06 |
+| **Should Attempt** | "SHOULD ATTEMPT" steps 7–9 | UC-07, UC-08, UC-09 |
+| **Stretch** | "STRETCH" step 10 | UC-10 |
+| **Mandatory (cross-cutting)** | Required by the Validation and Execution requirements, outside the numbered steps | UC-11, UC-12 |
+| **Beyond the requirement** | Not asked for in `REQUIREMENT.md`; supporting capability | UC-13 |
+
+Supporting behaviours take the priority of the use case they belong to. For example, the "cleared by policy" status belongs to UC-05/UC-06 (Must Complete), and replaying stored AI responses belongs to UC-12 (Mandatory).
+
 ### UC-01 Ingest & normalise telemetry. Actor: P1 (starts the run)
-- **Happy path:** 1) P1 starts a run against the alert, topology and policy files on disk. 2) The system reads all three. 3) The system turns each alert into a uniform record (stable ID, timestamp, service, severity, metric, observed value, threshold, delta, region, message) without any AI.
-- **Exception:** missing or malformed input file or alert row → the run stops (file missing) or reports the bad row with its line number. Nothing is guessed.
-- **AC:** *Given* the same alert file *When* normalised twice *Then* the records and IDs are identical and no AI interaction has happened yet.
+- **Priority:** Must Complete (REQUIREMENT step 1)
+- **Happy path:** 1) P1 starts a run against the alert, topology and policy files on disk. Each file is taken from the repository root if one was placed there, otherwise from the bundled sample data. 2) The system reads all three and reports which copy of each it used. 3) The system turns each alert into a uniform record (stable ID, timestamp, service, severity, metric, observed value, threshold, delta, region, message) without any AI.
+- **Exception:** missing or malformed input file or alert row → the run stops (file missing in both places, naming both) or reports the bad row with its line number. Nothing is guessed.
+- **AC:** *Given* the same alert file *When* normalised twice *Then* the records and IDs are identical and no AI interaction has happened yet. *Given* a replacement file in the repository root *When* the run starts *Then* that file is used instead of the bundled sample, and this is reported.
 
 ### UC-02 Correlate alerts into incidents. Actor: System for P1
+- **Priority:** Must Complete (REQUIREMENT step 2)
 - **Happy path:** 1) The system groups uniform alerts using time proximity, shared region, topology relationships and causal adjacency. 2) It marks the primary service, the impacted services and whether a deploy/change signal is present. 3) It records why the alerts were grouped.
 - **Exception:** an alert matches no group, or its service is not in the topology → it becomes its own incident, with that basis stated.
 - **AC:** *Given* normalised alerts *When* they are correlated *Then* every alert belongs to exactly one incident, each incident lists its correlation basis, and no AI was used.
 
 ### UC-03 Classify incidents & assign urgency. Actor: System (AI-assisted) for P1
+- **Priority:** Must Complete (REQUIREMENT step 3)
 - **Happy path:** 1) The system sends all incidents, the topology and the full policy for one classification analysis. 2) It receives a class, urgency, customer-impact summary, suspected root cause and confidence per incident. 3) It accepts only classes and urgencies listed in the policy.
 - **Exception:** a label outside the policy, or an incident missing → retry once, then fail clearly. Labels are never invented.
 - **AC:** *Given* correlated incidents *When* they are classified *Then* every incident has exactly one policy class and one policy urgency.
 
 ### UC-04 Draft a gated remediation plan per incident. Actor: System (AI-assisted) for P1
+- **Priority:** Must Complete (REQUIREMENT step 4)
 - **Happy path:** 1) For each incident separately, the system requests a plan using the incident, its classification, the relevant action policies, the allowed actions and its deploy signal. 2) It gets back recommended actions (reason, approval need, risk note), actions explicitly avoided, rollback considerations and verification checks. 3) It removes or rejects any action the policy does not allow, and sets the approval need from the policy.
 - **Exception:** a disallowed or unknown action is proposed → it is filtered out and recorded as "rejected by policy" with a reason.
 - **AC:** *Given* N incidents *When* plans are drafted *Then* there are N separate planning interactions and every recommended action is allowed for that incident's class or urgency.
 
 ### UC-05 Review, approve/reject actions and override urgency. Actor: P1
+- **Priority:** Must Complete (REQUIREMENT step 5)
 - **Happy path:** 1) The system shows each incident's class, urgency, recommended actions and which actions need approval, then pauses with the prescribed prompt. 2) P1 enters approve, reject or urgency commands and finishes with an empty line. 3) The system saves the decisions and works out each incident's final urgency and final approved, pending and rejected action sets.
 - **Exception:** invalid command, incident, action or urgency → inline error and re-prompt. Nothing is applied.
 - **AC:** *Given* P1 rejects an action and overrides an urgency *When* the briefing is generated *Then* the briefing shows the new urgency and lists that action as rejected.
 
 ### UC-06 Generate the incident briefing. Actor: System (AI-assisted) for P1/P2
+- **Priority:** Must Complete (REQUIREMENT step 6)
 - **Happy path:** 1) After review only, the system requests one briefing using the incidents, classifications, plans, decisions, final urgencies and final approved actions. 2) It produces a briefing with the 8 required sections. 3) It clearly labels AI-written content apart from operator-approved actions, and states that no action was executed.
 - **Exception:** a section is missing, or the content contradicts the decisions → regenerate once, then fail validation.
 - **AC:** *Given* review is complete *When* the briefing is generated *Then* it contains all 8 sections and matches the post-review urgencies and action statuses.
 
 ### UC-07 Score blast radius. Actor: System for P1/P2
+- **Priority:** Should Attempt (REQUIREMENT step 7)
 - **Happy path:** 1) For each incident, the system computes a 0–100 score from a published formula (number of impacted services, critical-path involvement, maximum severity, order-routing impact, deploy signal). 2) It records the factors. 3) It records a short justification.
 - **Exception:** a factor cannot be determined (e.g. no tier) → it scores 0 and is noted.
 - **AC:** *Given* the same incidents *When* they are scored *Then* the scores are identical and no AI was used.
 
 ### UC-08 Produce a safe automation plan. Actor: P2
+- **Priority:** Should Attempt (REQUIREMENT step 8)
 - **Happy path:** 1) The system sorts every allowed action into fully automatable, conditionally automatable or never-automate. 2) It grounds each choice in the policy and the observed incidents. 3) It states the guardrails for the conditional actions.
 - **Exception:** an action has no policy entry → it defaults to never-automate, with a note.
 - **AC:** *Given* the policy and incidents *When* the plan is produced *Then* every allowed action appears in exactly one tier with a rationale.
 
 ### UC-09 Produce a postmortem skeleton. Actor: P2
+- **Priority:** Should Attempt (REQUIREMENT step 9)
 - **Happy path:** 1) For each incident, the system pre-fills a timeline from the alerts. 2) It lists probable contributing factors and the evidence still needed. 3) It proposes prevention ideas covering architecture, observability and process, with AI inferences marked.
 - **Exception:** little evidence available → the gaps are listed explicitly rather than filled with guesses.
 - **AC:** *Given* incidents *When* the skeleton is produced *Then* every incident has all four parts and every AI inference is labelled.
 
 ### UC-10 Simulate policy what-ifs. Actor: P2
+- **Priority:** Stretch (REQUIREMENT step 10)
 - **Happy path:** 1) The system re-evaluates outcomes as if `disable_ai_assist_path` were pre-approved. 2) It re-evaluates outcomes as if deploy-related signals were ignored. 3) It reports the before/after differences in recommended and pending actions.
 - **Exception:** a scenario changes nothing → it reports "no change" explicitly.
 - **AC:** *Given* the same inputs *When* the simulation runs *Then* the results are identical across runs and show the differences per incident.
 
 ### UC-11 Audit & validate a run. Actor: P3
-- **Happy path:** 1) P3 runs the validation command. 2) The system checks artifact presence and validity, stage order, policy compliance, one plan per incident, that decisions were applied, the briefing's consistency and the AI interaction log. 3) It reports pass/fail for each check.
+- **Priority:** Mandatory: Validation Requirements and `llm_calls.jsonl` requirements
+- **Happy path:** 1) P3 runs the validation command. 2) The system checks artifact presence and validity, that the input files the run actually used are unchanged, stage order, policy compliance, one plan per incident, that decisions were applied, the briefing's consistency and the AI interaction log, including that every artifact it references exists. 3) It reports pass/fail for each check.
 - **Exception:** any check fails → non-zero result, naming the failing check.
 - **AC:** *Given* a completed run *When* validation runs *Then* every requirement check passes or the failures are named.
 
 ### UC-12 Replay with replaced inputs. Actor: P3
-- **Happy path:** 1) P3 deletes the generated outputs and supplies equivalent input files. 2) P3 re-runs the full workflow, including the review (live or pre-recorded decisions). 3) All outputs are regenerated from the new inputs.
-- **Exception:** the inputs use different service names, IDs or classes → handled with no dependence on sample values.
-- **AC:** *Given* new equivalent inputs *When* the workflow re-runs *Then* every required output is regenerated and passes validation.
+- **Priority:** Mandatory: Execution Requirements and the "replayable" BUILD statement
+- **Happy path:** 1) P3 deletes the generated outputs and supplies equivalent input files, either in the repository root or in place of the bundled samples. 2) P3 re-runs the full workflow, including the review (live or pre-recorded decisions). 3) All outputs are regenerated from the new inputs.
+- **Exception:** the inputs use different service names, IDs or classes → handled with no dependence on sample values. A replacement placed in the repository root that differs from the bundled sample → the replacement is used and the override is reported.
+- **AC:** *Given* new equivalent inputs *When* the workflow re-runs *Then* every required output is regenerated from those inputs (never the bundled samples) and passes validation against them.
+
+### UC-13 Start, monitor and stop a run. Actor: P1 / P3
+- **Priority:** Beyond the requirement: supporting capability added on request; not one of the requirement's numbered or mandatory items
+- **Happy path:** 1) The actor starts a run in the foreground (interactive or scripted review) or in the background. 2) The actor checks whether a run is in progress and which stage it has reached. 3) The actor stops an in-flight run when needed.
+- **Exception:** a run is already in progress → a second start is refused. A run is stopped mid-way → it ends cleanly, keeps what it has produced, and records that it was aborted and after which stage.
+- **AC:** *Given* a run in progress *When* the actor stops it *Then* the run ends, its record states "aborted" with the last completed stage, and the status shows no run in progress.
 
 ## Scope
 | Module | In-scope | Out-of-scope | Reason |
 |---|---|---|---|
-| M1 | Read the 3 input files; uniform alert records; rule-based correlation into incidents (UC-01, UC-02) | Live streaming ingestion, polling real monitoring systems | The challenge supplies "live-like" files on disk |
+| M1 | Read the 3 input files (replacements in the repository root take precedence over the bundled samples); uniform alert records; rule-based correlation into incidents (UC-01, UC-02) | Live streaming ingestion, polling real monitoring systems | The challenge supplies "live-like" files on disk |
 | M2 | Policy-constrained classification and urgency; per-incident gated plans; policy enforcement; blast radius (UC-03, UC-04, UC-07) | AI parsing or correlation of raw alerts; AI-assigned scores | Determinism is required for these steps |
-| M3 | Interactive approve/reject/urgency checkpoint; recorded decisions; post-review briefing (UC-05, UC-06) | Executing any real infrastructure action; chat interface; dashboard UI | Planning and control-plane output only; not a monitoring dashboard |
-| M4 | Retaining intermediate artifacts; AI interaction log; validation command; automation plan; postmortem; what-if simulation; replay (UC-08 to UC-12) | Automatic paging or status-page publishing; ticketing integration | Recommendations only; no outward-facing actions |
+| M3 | Interactive approve/reject/urgency checkpoint; recorded decisions; post-review briefing (UC-05, UC-06) | Executing any real infrastructure action, including actions the policy clears without human approval ("cleared by policy" is a status, never an automatic action); chat interface; dashboard UI | Planning and control-plane output only; not a monitoring dashboard |
+| M4 | Retaining intermediate artifacts; AI interaction log; validation command; automation plan; postmortem; what-if simulation; replay (stored AI responses are reused only to reproduce a run); run lifecycle control for a single run: start in the foreground or background, monitor, stop (UC-08 to UC-13) | Automatic paging or status-page publishing; ticketing integration; running as a long-lived or self-restarting service; run history, trends or cross-run deduplication | Recommendations only; no outward-facing actions; each run stands alone |
 
 ## Self-Check Findings
-> Status: the user accepted every proposed default on 2026-10-14. Each finding is **resolved** with the default below, and the design section of this plan builds to them.
+> Status: every proposed default was accepted on 2026-10-14. The two findings marked *(2026-10-15)* came from the requirements cross-check and were resolved the same way. Every finding is **resolved** and implemented as described in [`IMPLEMENTATION_SPEC.md`](IMPLEMENTATION_SPEC.md).
 
 | Type | Description | Ref | Resolution (confirmed) |
 |---|---|---|---|
@@ -102,4 +132,6 @@
 | Gap | The blast radius factor "order-routing impacted" depends on a service role, but service names must not be hardcoded. | UC-07 | Identify it from a configurable name pattern, falling back to the critical-path service at the end of the dependency chain |
 | Gap | The what-if "ignore deployment-related signals" may change the incident class, which is an AI output; a deterministic simulation cannot re-classify. | UC-10 | Re-run the rule-based steps; flag incidents classed as deployment-related as "needs reclassification" rather than calling the AI |
 | Gap | Behaviour when the AI service is unavailable or not configured is unspecified, but the evaluator must be able to run the workflow end to end. | UC-03, UC-04, UC-06, UC-12 | Fall back to a rule-based analyser that follows the same contract and is logged as such |
-| Coverage | All in-scope rows trace to ≥1 use case (M1→UC-01/02, M2→UC-03/04/07, M3→UC-05/06, M4→UC-08 to UC-12). | All | No orphans |
+| Gap *(2026-10-15)* | The source says the evaluator "may replace" the three input files but not *where* they will be placed. With the samples bundled in a data folder, replacements put in the repository root could be silently ignored, so validation would pass against the wrong data. | UC-01, UC-11, UC-12 | Each file is located independently: a repository-root copy takes precedence over the bundled sample. The copy used is reported and recorded, and validation checks exactly those files. |
+| Gap *(2026-10-15)* | The AI interaction log must list input and output artifacts as "paths", but a call may read or write only one part of a shared artifact (e.g. one incident's plan). | UC-11 | Log real file paths that exist, and name the part of the file separately. Validation confirms every logged path exists. |
+| Coverage | All in-scope rows trace to ≥1 use case (M1→UC-01/02, M2→UC-03/04/07, M3→UC-05/06, M4→UC-08 to UC-13). | All | No orphans |

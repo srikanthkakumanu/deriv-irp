@@ -27,8 +27,8 @@ cp .env.example .env                        # optional: add OPENAI_API_KEY (and 
 
 make run                                    # interactive operator review
 make run-scripted PROVIDER=offline          # scripted review from fixtures/sample_decisions.txt, no network
-make validate                               # 21 requirement checks (also: python validate.py)
-make test                                   # 175 pytest tests (make coverage for the report)
+make validate                               # 22 requirement checks (also: python validate.py)
+make test                                   # 189 pytest tests (make coverage for the report)
 
 scripts/start.sh -m scripted -b             # or use the start/stop scripts (see below)
 scripts/status.sh && scripts/stop.sh
@@ -53,7 +53,7 @@ The application is a **batch pipeline**, not a long-running server. "Start" laun
 | `-p, --provider` | `auto` · `openai` · `offline` | `auto` (or `$IRP_PROVIDER`) |
 | `-d, --decisions FILE` | operator commands, one per line, `#` for comments | `fixtures/sample_decisions.txt` for scripted/replay |
 | `-b, --background` | run detached, logging to `.run/irp.log` (not allowed with `interactive`) | off |
-| `-i, --input-dir DIR` | folder with `alerts.jsonl`, `service_topology.json`, `runbook_policy.json` | `data` |
+| `-i, --input-dir DIR` | folder with `alerts.jsonl`, `service_topology.json`, `runbook_policy.json` | each file from the repo root if present, else `data/` |
 | `-o, --out-dir DIR` | artifact output folder | `data/output` |
 | `-s, --skip-optional` | skip the automation plan, postmortem and simulation | off |
 | `-- …` | extra arguments passed to `irp run` (e.g. `-- --window 60 --strict`) | — |
@@ -108,10 +108,11 @@ src/irp/
 ├── domain/          # pure rules: AlertNormalizer, IncidentCorrelator, RunbookPolicy, ReviewSession,
 │                    #   BlastRadiusCalculator, AutomationTiering, PolicySimulator, StageMachine
 ├── application/     # use cases, ports, Pydantic LLM contracts, AuditedLLMGateway, RunValidator, prompts
-├── infrastructure/  # filesystem, OpenAI, offline model, Markdown presenter, clock adapters
+├── infrastructure/  # input file resolution, filesystem, OpenAI, offline model, Markdown presenter, clock adapters
 ├── interface/       # CLI (irp run / irp validate), terminal and scripted operator consoles
 └── bootstrap.py     # composition root
 scripts/             # start.sh · stop.sh · status.sh · restart.sh (+ _common.sh helpers)
+.github/workflows/   # ci.yml (GitHub Actions)
 docs/                # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md · TEST_SUMMARY.md
 ```
 
@@ -135,6 +136,7 @@ Full details are in [`docs/IMPLEMENTATION_SPEC.md`](docs/IMPLEMENTATION_SPEC.md)
 ## Data layout
 
 ```
+<repo root>/{alerts.jsonl, service_topology.json, runbook_policy.json}   # optional replacements (take precedence)
 data/
 ├── alerts.jsonl              # input: telemetry, one JSON object per line
 ├── service_topology.json     # input: services, dependencies, tiers
@@ -146,7 +148,14 @@ data/
 fixtures/sample_decisions.txt # scripted operator review
 ```
 
-To use replacement fixtures, overwrite the three files in `data/`, or point the run at another folder with `--input-dir DIR` (`-i DIR` for the scripts, `DATA_DIR=DIR` for make). Outputs can be redirected the same way with `--out-dir`, `-o` or `OUT_DIR=`.
+### Input file resolution
+
+Each input file is located **independently** (unless `--input-dir` is given):
+
+1. `<repo root>/<file>`: a replacement fixture dropped in the repo root **takes precedence**;
+2. `data/<file>`: the bundled sample fixture.
+
+So an evaluator can drop a replacement `alerts.jsonl`, `service_topology.json` and/or `runbook_policy.json` into the repo root, or overwrite the files in `data/`; either works with no flags. The run logs which file was used (`input alerts.jsonl <- alerts.jsonl (repo_root)`) and prints a `NOTICE` when a repo-root file overrides a different bundled copy. The chosen path, origin and SHA-256 of each file are recorded in `data/output/run_manifest.json`, and `make validate` re-checks exactly those files. To use another folder, pass `--input-dir DIR` (`-i DIR` for the scripts, `DATA_DIR=DIR` for make), which requires all three files there. Outputs always go to `data/output/` unless you pass `--out-dir`, `-o` or `OUT_DIR=`.
 
 ## Artifacts
 
@@ -159,7 +168,24 @@ Each run deletes the previous generated artifacts in `data/output/` first, then 
 | `operator_decisions.json` | commands, decisions, per-incident final state, Stage 3 input digest |
 | `incident_brief.md` | 8 required sections + deterministic **Authoritative Action Ledger** |
 | `safe_automation_plan.md`, `postmortem_template.md`, `policy_simulation.json` | optional outputs |
-| `llm_calls.jsonl`, `llm_raw/`, `llm_cache/`, `run_manifest.json` | audit trail and replay (`run_manifest.json` gains a `termination` record if the run was stopped or failed) |
+| `llm_calls.jsonl` | one record per LLM call; `input_artifacts` / `output_artifact` are real file paths (e.g. `data/runbook_policy.json`, `data/output/incident_analysis.json`), and the part of a file a call reads or writes is named in `input_sections` / `output_section` (e.g. `stage2.INC-001`) |
+| `run_manifest.json` | input provenance (path, origin `repo_root`/`data_dir`/`explicit`, SHA-256), override notices, timestamped stage history, and a `termination` record if the run was stopped or failed |
+| `llm_raw/`, `llm_cache/` | full request/response per call; replay cache keyed by prompt hash |
+
+## Validation
+
+`make validate` (or `python validate.py`, or `irp validate`) runs **22 checks** against the last run's artifacts and exits non-zero on any failure. It always validates the input files **the run actually used**, as recorded in `run_manifest.json`. The checks cover:
+
+- **Artifacts:** required artifacts exist; JSON is valid; malformed alert rows were reported.
+- **Inputs:** input files were read from disk, and their hashes still match.
+- **Ordering:** normalisation and correlation happened before any LLM call; all 11 stages ran in order; the brief was generated only after review.
+- **Classification:** every incident has a Stage 1 classification, using only policy classes and urgency levels; there was exactly one Stage 1 call.
+- **Remediation:** one Stage 2 call per incident, not batched; only allowed actions; policy compatibility enforced; approval flags taken from the policy.
+- **Review and brief:** operator decisions were saved and applied to the Stage 3 inputs (digest match plus a replay of the decisions); the brief reflects post-review urgencies and approved/rejected actions.
+- **LLM log:** `llm_calls.jsonl` has separate records for every required stage, and every logged artifact path exists.
+- **Optional outputs:** blast radius scores and the policy simulation are valid.
+
+The same validator runs inside the pipeline at the `VALIDATION_COMPLETE` stage. Results are in [`docs/TEST_SUMMARY.md`](docs/TEST_SUMMARY.md).
 
 ## Continuous integration
 
@@ -173,6 +199,7 @@ Each run deletes the previous generated artifacts in `data/output/` first, then 
 
 CI needs no secrets by default: the offline deterministic model covers the full pipeline.
 
+## Configuration
 
 | Variable | Default |
 |---|---|
@@ -182,6 +209,6 @@ CI needs no secrets by default: the offline deterministic model covers the full 
 | `IRP_CORRELATION_WINDOW_S` | `120` |
 | `IRP_ORDER_PATH_PATTERN` | `order\|execution\|routing\|router` |
 | `IRP_OPERATOR` | OS user |
-| `--input-dir` / `--out-dir` (`DATA_DIR` / `OUT_DIR` for make) | `data` / `data/output` |
+| `--input-dir` / `--out-dir` (`DATA_DIR` / `OUT_DIR` for make) | auto (repo root, else `data/`) / `data/output` |
 
 Secrets in `.env` and everything under `data/output/` (including the raw LLM captures in `llm_raw/`) are git-ignored.

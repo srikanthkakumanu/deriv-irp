@@ -6,7 +6,8 @@
 #   -p, --provider NAME    auto (default) | openai | offline
 #   -d, --decisions FILE   operator decisions file (default: fixtures/sample_decisions.txt for scripted/replay)
 #   -b, --background       run detached; output goes to .run/irp.log (scripted/replay modes only)
-#   -i, --input-dir DIR    directory with alerts.jsonl, service_topology.json, runbook_policy.json (default: data)
+#   -i, --input-dir DIR    directory with alerts.jsonl, service_topology.json, runbook_policy.json
+#                          (default: each file from the repo root if present, else from data/)
 #   -o, --out-dir DIR      artifact output directory (default: data/output)
 #   -s, --skip-optional    skip automation plan, postmortem and simulation outputs
 #   -h, --help
@@ -19,9 +20,9 @@
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 MODE="interactive"; PROVIDER="${IRP_PROVIDER:-auto}"; DECISIONS=""; BACKGROUND=0
-INPUT_DIR="$ROOT_DIR/data"; OUT_DIR="$ROOT_DIR/data/output"; EXTRA=()
+INPUT_DIR=""; OUT_DIR="$ROOT_DIR/data/output"; EXTRA=()
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,7 +49,11 @@ if [[ "$MODE" == "interactive" && "$BACKGROUND" -eq 1 ]]; then
   die "--background needs a non-interactive review: use --mode scripted or --mode replay."
 fi
 for f in alerts.jsonl service_topology.json runbook_policy.json; do
-  [[ -f "$INPUT_DIR/$f" ]] || die "missing input file: $INPUT_DIR/$f"
+  if [[ -n "$INPUT_DIR" ]]; then
+    [[ -f "$INPUT_DIR/$f" ]] || die "missing input file: $INPUT_DIR/$f"
+  elif [[ ! -f "$ROOT_DIR/$f" && ! -f "$ROOT_DIR/data/$f" ]]; then
+    die "missing input file: $f (looked in $ROOT_DIR and $ROOT_DIR/data)"
+  fi
 done
 
 if pid="$(running_pid)" && [[ -n "$pid" ]]; then
@@ -58,7 +63,8 @@ fi
 ensure_env
 mkdir -p "$RUN_DIR" "$OUT_DIR"
 
-ARGS=(run --provider "$PROVIDER" --input-dir "$INPUT_DIR" --out-dir "$OUT_DIR")
+ARGS=(run --provider "$PROVIDER" --out-dir "$OUT_DIR")
+[[ -n "$INPUT_DIR" ]] && ARGS+=(--input-dir "$INPUT_DIR")
 [[ -n "$DECISIONS" ]] && ARGS+=(--decisions-file "$DECISIONS")
 [[ "$MODE" == "replay" ]] && ARGS+=(--replay)
 ARGS+=("${EXTRA[@]+"${EXTRA[@]}"}")

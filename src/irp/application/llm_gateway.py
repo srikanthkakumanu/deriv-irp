@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ..domain.pipeline_stage import Stage, StageMachine
 from ..shared.hashing import canonical_json, digest, sha256_text
+from ..shared.paths import split_section
 from .contracts import strict_json_schema
 from .ports import ArtifactStore, Clock, LanguageModel, LLMRequest
 
@@ -48,6 +49,8 @@ class LLMCallRecord(BaseModel):
     prompt_hash: str
     input_artifacts: list[str]
     output_artifact: str
+    input_sections: dict[str, str]
+    output_section: str | None
     pipeline_stage_at_call: str
     attempts: int
     status: str
@@ -58,7 +61,9 @@ class LLMCallRecord(BaseModel):
 
 class AuditedLLMGateway:
     def __init__(self, model: LanguageModel, store: ArtifactStore, clock: Clock, stages: StageMachine,
-                 replay: bool = False, max_attempts: int = 2) -> None:
+                 replay: bool = False, max_attempts: int = 2,
+                 artifact_path: Callable[[str], str] | None = None) -> None:
+        self._artifact_path = artifact_path or (lambda name: name)
         self._model = model
         self._store = store
         self._clock = clock
@@ -78,6 +83,23 @@ class AuditedLLMGateway:
     @property
     def model_name(self) -> str:
         return self._model.model
+
+    def set_artifact_path_resolver(self, resolver: Callable[[str], str]) -> None:
+        """Maps logical artifact names (e.g. ``incident_analysis.json#stage1``) to real file paths."""
+        self._artifact_path = resolver
+
+    def _resolve_artifacts(self, task: LLMTask) -> tuple[list[str], str, dict[str, str], str | None]:
+        sections: dict[str, str] = {}
+        inputs: list[str] = []
+        for name in task.input_artifacts:
+            base, section = split_section(name)
+            path = self._artifact_path(base)
+            if path not in inputs:
+                inputs.append(path)
+            if section:
+                sections[path] = section
+        out_base, out_section = split_section(task.output_artifact)
+        return inputs, self._artifact_path(out_base), sections, out_section
 
     def run(self, task: LLMTask) -> BaseModel:
         # Hard gate: no LLM call before deterministic normalisation and correlation.
@@ -122,10 +144,12 @@ class AuditedLLMGateway:
                         {"role": "user", "content": "Your output violated these constraints; return corrected JSON only: " + "; ".join(problems)},
                     ]
 
+        input_paths, output_path, input_sections, output_section = self._resolve_artifacts(task)
         record = LLMCallRecord(
             call_id=call_id, stage=task.stage, incident_id=task.incident_id, timestamp=self._clock.now(),
             provider=self._model.name + (" (replay)" if self._replay else ""), model=self._model.model,
-            prompt_hash=prompt_hash, input_artifacts=list(task.input_artifacts), output_artifact=task.output_artifact,
+            prompt_hash=prompt_hash, input_artifacts=input_paths, output_artifact=output_path,
+            input_sections=input_sections, output_section=output_section,
             pipeline_stage_at_call=self._stages.current.value, attempts=attempts,
             status="ok" if result is not None else "failed",
             latency_ms=round((time.monotonic() - started) * 1000, 1), errors=errors, raw_record=f"llm_raw/{call_id}.json",

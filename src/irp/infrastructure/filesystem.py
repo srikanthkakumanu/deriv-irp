@@ -16,13 +16,11 @@ from ..domain.alerts import RawAlertRecord
 from ..domain.policy import RunbookPolicy
 from ..domain.topology import ServiceTopology
 
+from .input_locator import InputFileError, InputFiles  # noqa: F401  (InputFileError re-exported)
+
 ALERTS_FILE = "alerts.jsonl"
 TOPOLOGY_FILE = "service_topology.json"
 POLICY_FILE = "runbook_policy.json"
-
-
-class InputFileError(ValueError):
-    pass
 
 
 class FileSystemArtifactStore:
@@ -79,15 +77,45 @@ class FileSystemArtifactStore:
         return hashlib.sha256(self._path(name).read_bytes()).hexdigest()
 
 
-class FileSystemInputSource:
-    """InputSource adapter: reads alerts.jsonl, service_topology.json and runbook_policy.json."""
+class InputFileStore:
+    """Read-only store over the resolved input files, addressed by file name (used by the validator)."""
 
-    def __init__(self, input_dir: Path, clock: Clock) -> None:
-        self._dir = Path(input_dir)
+    def __init__(self, files: InputFiles) -> None:
+        self._files = files
+
+    def _path(self, name: str) -> Path:
+        if name not in self._files.files:
+            raise FileNotFoundError(name)
+        return self._files.path(name)
+
+    def read_text(self, name: str) -> str:
+        return self._path(name).read_text(encoding="utf-8")
+
+    def read_json(self, name: str) -> Any:
+        return json.loads(self.read_text(name))
+
+    def exists(self, name: str) -> bool:
+        return name in self._files.files and self._path(name).is_file()
+
+    def location(self, name: str) -> str:
+        return str(self._path(name))
+
+    def sha256(self, name: str) -> str:
+        return hashlib.sha256(self._path(name).read_bytes()).hexdigest()
+
+
+class FileSystemInputSource:
+    """InputSource adapter: reads alerts.jsonl, service_topology.json and runbook_policy.json
+    from the locations chosen by ``resolve_input_files``."""
+
+    def __init__(self, files: InputFiles | Path, clock: Clock) -> None:
+        from .input_locator import resolve_input_files
+        self._files = files if isinstance(files, InputFiles) else resolve_input_files(Path(files))
         self._clock = clock
 
     def load(self) -> PipelineInputs:
-        paths = {"alerts": self._dir / ALERTS_FILE, "topology": self._dir / TOPOLOGY_FILE, "policy": self._dir / POLICY_FILE}
+        labels = {"alerts": ALERTS_FILE, "topology": TOPOLOGY_FILE, "policy": POLICY_FILE}
+        paths = {label: self._files.path(name) for label, name in labels.items()}
         missing = [str(p) for p in paths.values() if not p.is_file()]
         if missing:
             raise InputFileError(f"required input file(s) missing: {missing}")
@@ -97,7 +125,8 @@ class FileSystemInputSource:
             data = path.read_bytes()
             contents[label] = data
             provenance[label] = InputProvenance(path=str(path), sha256=hashlib.sha256(data).hexdigest(),
-                                                bytes=len(data), read_at=self._clock.now())
+                                                bytes=len(data), read_at=self._clock.now(),
+                                                origin=self._files.files[labels[label]].origin)
         raw_topology = self._json(paths["topology"], contents["topology"])
         raw_policy = self._json(paths["policy"], contents["policy"])
         try:
@@ -106,7 +135,8 @@ class FileSystemInputSource:
         except ValidationError as exc:
             raise InputFileError(f"input schema error: {exc}") from exc
         return PipelineInputs(alert_records=tuple(self._records(contents["alerts"].decode("utf-8"))), topology=topology,
-                              policy=policy, raw_topology=raw_topology, raw_policy=raw_policy, provenance=provenance)
+                              policy=policy, raw_topology=raw_topology, raw_policy=raw_policy, provenance=provenance,
+                              notices=self._files.notices)
 
     @staticmethod
     def _json(path: Path, data: bytes) -> dict[str, Any]:

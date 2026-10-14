@@ -94,3 +94,16 @@ def test_prompt_hash_changes_with_payload():
     g.run(task().model_copy(update={"payload": {"k": 2}}))
     h = [c["prompt_hash"] for c in calls(store)]
     assert h[0] != h[1]
+
+
+def test_logical_artifact_names_are_resolved_to_paths_with_sections():
+    store = MemoryStore()
+    g = AuditedLLMGateway(FakeModel([{"value": 1}]), store, FixedStepClock(), correlated_machine(),
+                          artifact_path=lambda name: f"out/{name}")
+    g.run(task().model_copy(update={"input_artifacts": ("a.json", "c.json#stage1", "c.json#stage1"),
+                                    "output_artifact": "c.json#stage2.INC-001"}))
+    [rec] = calls(store)
+    assert rec["input_artifacts"] == ["out/a.json", "out/c.json"]
+    assert rec["output_artifact"] == "out/c.json"
+    assert rec["input_sections"] == {"out/c.json": "stage1"}
+    assert rec["output_section"] == "stage2.INC-001"

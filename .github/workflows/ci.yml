@@ -86,7 +86,7 @@ jobs:
       - name: Run pipeline (scripted operator review, offline model)
         run: make run-scripted PROVIDER=offline
 
-      - name: Validate artifacts (21 requirement checks)
+      - name: Validate artifacts (22 requirement checks)
         run: make validate
 
       - name: Replay from cached LLM responses (no network)

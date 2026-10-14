@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -110,6 +111,7 @@ class RunValidator:
             ("operator decisions saved and applied to Stage 3 inputs", self.check_decisions_applied),
             ("incident brief reflects post-review urgencies and actions", self.check_brief),
             ("llm_calls.jsonl has separate records for required stages", self.check_llm_log),
+            ("llm_calls.jsonl artifact paths exist on disk", self.check_llm_artifact_paths),
             ("blast radius scores are valid", self.check_blast_radius),
             ("policy simulation is valid", self.check_simulation),
         ]
@@ -148,9 +150,12 @@ class RunValidator:
         manifest = self._json("run_manifest.json")
         for label, name in (("alerts", "alerts.jsonl"), ("topology", "service_topology.json"), ("policy", "runbook_policy.json")):
             rec = manifest["inputs"][label]
+            used = Path(self._in.location(name)).resolve()
+            assert Path(rec["path"]).resolve() == used, f"{name}: run read {rec['path']} but validating {used}"
             actual = self._in.sha256(name)
             assert rec["sha256"] == actual, f"{name}: manifest hash {rec['sha256'][:12]} != file hash {actual[:12]} (inputs changed since run?)"
-        return "sha256 of all 3 inputs match the run manifest"
+        origins = ", ".join(f"{k}={v.get('origin', '?')}" for k, v in manifest["inputs"].items())
+        return f"sha256 of all 3 inputs match the run manifest ({origins})"
 
     def check_normalized_schema(self) -> str:
         alerts = self._json("normalized_alerts.json")
@@ -349,6 +354,15 @@ class RunValidator:
         if self._out.exists("safe_automation_plan.md"):
             assert "optional_automation_plan" in stages, "automation plan generated without a logged LLM call"
         return f"{len(self._calls)} records: " + ", ".join(sorted(set(stages)))
+
+    def check_llm_artifact_paths(self) -> str:
+        checked = 0
+        for c in self._calls:
+            for path in [*c["input_artifacts"], c["output_artifact"]]:
+                assert "#" not in path, f"{c['call_id']}: '{path}' is not a file path"
+                assert Path(path).is_file(), f"{c['call_id']}: logged artifact path does not exist: {path}"
+                checked += 1
+        return f"{checked} logged paths exist"
 
     def check_blast_radius(self) -> str:
         if not self._out.exists("blast_radius_scores.json"):

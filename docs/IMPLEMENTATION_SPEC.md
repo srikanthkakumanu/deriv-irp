@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented. 175 tests passing, 99% line coverage, `make validate` 21/21 |
+| **Status** | Implemented. 189 tests passing, 99% line coverage, `make validate` 22/22 |
 | **Source requirement** | [`REQUIREMENT.md`](REQUIREMENT.md) |
 | **Functional baseline** | [`BRD.md`](BRD.md) (personas P1–P3, use cases UC-01 to UC-12, resolved self-check findings) |
 | **Scope of this document** | How the BRD is realised: architecture, workflows, technology, layers, boundaries |
@@ -37,7 +37,7 @@ The system is a **staged, replayable control-plane workflow**. It turns raw plat
 | **Determinism where it matters** | Normalisation, correlation, blast radius, policy enforcement, review application and what-if simulation are pure domain code with no LLM. |
 | **Policy is the source of truth** | `RunbookPolicy` decides permissions and approval needs. The LLM's approval flag is overwritten, and disallowed actions are filtered out and recorded. |
 | **Human in the loop** | A mandatory review checkpoint sits before the brief. Decisions are re-checked against policy at the final urgency. |
-| **Auditability** | Every stage transition is timestamped. Every LLM call is logged, with the raw request and response kept. Input hashes are recorded. A validator re-derives the state. |
+| **Auditability** | Every stage transition is timestamped. Every LLM call is logged with real artifact paths, and the raw request and response are kept. The path, origin and hash of each input are recorded. A validator re-derives the state from the files the run actually used. |
 | **Replayability** | LLM responses are cached by prompt hash, operator decisions can be scripted, and prompts contain no wall-clock data. |
 | **Clean architecture** | Layered and hexagonal (ports and adapters). Domain-Driven Design aggregates and value objects. Dependencies point inward only. |
 
@@ -49,10 +49,10 @@ The system is a **staged, replayable control-plane workflow**. It turns raw plat
 
 ```mermaid
 flowchart LR
-    subgraph Inputs["Disk inputs (replaceable)"]
-        A[data/alerts.jsonl]
-        T[data/service_topology.json]
-        P[data/runbook_policy.json]
+    subgraph Inputs["Disk inputs (replaceable; repo root overrides data/ per file)"]
+        A[alerts.jsonl]
+        T[service_topology.json]
+        P[runbook_policy.json]
     end
     OP([P1 On-call Operator])
     EL([P2 Engineering Leader])
@@ -94,7 +94,7 @@ flowchart TB
         D8[StageMachine]
     end
     subgraph Infrastructure["Infrastructure layer (driven adapters)"]
-        FS[FileSystemInputSource<br/>FileSystemArtifactStore]
+        FS[resolve_input_files · FileSystemInputSource<br/>InputFileStore · FileSystemArtifactStore]
         OAI[OpenAIModel]
         OFF[OfflineModel]
         MD[MarkdownPresenter]
@@ -128,12 +128,14 @@ src/irp/
 ├── application/       # Layer 2: use cases, ports, LLM contracts, gateway, validator, prompts
 ├── infrastructure/    # Layer 3: adapters for files, OpenAI, offline model, presenter, clock
 ├── interface/         # Layer 4: CLI and operator consoles (driving adapters)
-├── shared/            # cross-cutting pure helpers (canonical JSON, hashing)
+├── shared/            # cross-cutting pure helpers (canonical JSON, hashing, path display)
 └── bootstrap.py       # composition root (dependency injection)
 
-data/                  # inputs: alerts.jsonl, service_topology.json, runbook_policy.json
+<repo root>/*.json(l)  # optional replacement inputs (take precedence over data/, per file)
+data/                  # bundled inputs: alerts.jsonl, service_topology.json, runbook_policy.json
 └── output/            # all generated artifacts, llm_raw/, llm_cache/ (git-ignored)
 scripts/               # start.sh · stop.sh · status.sh · restart.sh
+.github/workflows/     # ci.yml (GitHub Actions)
 fixtures/              # sample_decisions.txt (scripted operator review)
 docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (this file) · TEST_SUMMARY.md
 ```
@@ -160,10 +162,10 @@ docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (thi
 |---|---|
 | `ports.py` | Protocols: `InputSource`, `ArtifactStore`, `LanguageModel`, `OperatorConsole`, `Clock`, `ReportPresenter`; DTOs `PipelineInputs`, `LLMRequest` |
 | `contracts.py` | **Runtime-generated Pydantic response models.** `Literal` enums come from the loaded policy and incident IDs. Also the strict JSON-schema conversion, brief sections and ledger heading. |
-| `llm_gateway.py` | `AuditedLLMGateway`: stage guard, schema and semantic validation, one corrective retry, `llm_calls.jsonl`, `llm_raw/`, `llm_cache/` replay |
+| `llm_gateway.py` | `AuditedLLMGateway`: stage guard, schema and semantic validation, one corrective retry, `llm_calls.jsonl` (logical artifact names resolved to real paths plus `input_sections` / `output_section`), `llm_raw/`, `llm_cache/` replay |
 | `use_cases/*` | One class per use case (UC-03 to UC-10) |
-| `pipeline.py` | `IncidentResponsePipeline`: orchestrates the 11 stages and persists the run manifest |
-| `validation.py` | `RunValidator`: 21 requirement checks against the persisted artifacts (shared by the pipeline and `make validate`) |
+| `pipeline.py` | `IncidentResponsePipeline`: orchestrates the 11 stages, persists the run manifest (input provenance and notices, stage history), maps artifact names to paths, and records a `termination` (aborted/failed + last completed stage) on interruption or error |
+| `validation.py` | `RunValidator`: 22 requirement checks against the persisted artifacts and the input files the run used (shared by the pipeline and `make validate`) |
 | `documents.py` | Persisted document models (`OperatorDecisionsDocument`, `IncidentAnalysisDocument`, …) and presenter view models |
 | `review_commands.py` | The operator command grammar and the exact prompt text required by the specification |
 | `prompts/*.md` | Prompt templates. Data is injected at runtime and never hardcoded. |
@@ -172,7 +174,7 @@ docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (thi
 
 | Adapter | Port | Notes |
 |---|---|---|
-| `FileSystemInputSource` | `InputSource` | Reads the 3 files and records SHA-256, size and read time. Malformed alert lines become `RawAlertRecord(parse_error=…)`. |
+| `resolve_input_files` / `FileSystemInputSource` / `InputFileStore` | `InputSource` | Resolves each input (repo root first, then `data/`, or `--input-dir`), reads it and records path, origin, SHA-256, size and read time. Malformed alert lines become `RawAlertRecord(parse_error=…)`. |
 | `FileSystemArtifactStore` | `ArtifactStore` | Atomic writes, JSONL append, path-traversal guard, byte-exact SHA-256 |
 | `OpenAIModel` | `LanguageModel` | Chat Completions with Structured Outputs (`strict: true`), temperature 0, seed 7, fallback for models without `temperature` |
 | `OfflineModel` | `LanguageModel` | Rule-based model following the same contract. Every label it emits comes from the payload's policy. |
@@ -183,7 +185,7 @@ docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (thi
 
 | Module | Responsibility |
 |---|---|
-| `cli.py` | `irp run` / `irp validate`; minimal `.env` loader (never overrides existing environment variables); exit codes 0 ok, 1 error, 2 validation failed |
+| `cli.py` | `irp run` / `irp validate`; minimal `.env` loader (never overrides existing environment variables); SIGTERM is turned into a graceful abort; exit codes 0 ok, 1 error, 2 validation failed, 130 stopped/interrupted. `irp validate` checks the inputs recorded in the run manifest unless `--input-dir` is given. |
 | `operator_console.py` | `TerminalOperatorConsole` (TTY or piped stdin) and `ScriptedOperatorConsole` (decisions file, `#` comments) |
 
 ---
@@ -195,7 +197,7 @@ docs/                  # REQUIREMENT.md · BRD.md · IMPLEMENTATION_SPEC.md (thi
 ```mermaid
 stateDiagram-v2
     [*] --> INIT
-    INIT --> INPUTS_LOADED: read 3 files, hash them
+    INIT --> INPUTS_LOADED: resolve each file (repo root, else data/), read, hash
     INPUTS_LOADED --> ALERTS_NORMALIZED: AlertNormalizer (no LLM)
     ALERTS_NORMALIZED --> INCIDENTS_CORRELATED: IncidentCorrelator + BlastRadius (no LLM)
     INCIDENTS_CORRELATED --> INCIDENTS_CLASSIFIED: Stage 1, ONE LLM call
@@ -203,7 +205,7 @@ stateDiagram-v2
     REMEDIATION_PLANS_DRAFTED --> OPERATOR_REVIEW_COMPLETE: human checkpoint, policy re-check
     OPERATOR_REVIEW_COMPLETE --> INCIDENT_BRIEF_GENERATED: Stage 3, ONE LLM call on post-review state
     INCIDENT_BRIEF_GENERATED --> OPTIONAL_OUTPUTS_GENERATED: automation plan, postmortem, simulation
-    OPTIONAL_OUTPUTS_GENERATED --> VALIDATION_COMPLETE: RunValidator (21 checks)
+    OPTIONAL_OUTPUTS_GENERATED --> VALIDATION_COMPLETE: RunValidator (22 checks)
     VALIDATION_COMPLETE --> RESULTS_FINALISED
     RESULTS_FINALISED --> [*]
 ```
@@ -212,6 +214,7 @@ Guards:
 - `AuditedLLMGateway.run()` raises `StageOrderError` if called before `INCIDENTS_CORRELATED`.
 - `GenerateIncidentBrief` requires exactly `OPERATOR_REVIEW_COMPLETE`.
 - Skipping a stage or repeating one raises an error.
+- An interruption (Ctrl-C, or SIGTERM from `scripts/stop.sh`) or an error is recorded in `run_manifest.json` → `termination` with the last completed stage. Artifacts written so far are kept.
 
 ### 4.2 End-to-end sequence
 
@@ -228,7 +231,7 @@ sequenceDiagram
 
     CLI->>P: run()
     P->>S: remove stale artifacts
-    P->>D: load inputs (hash) → normalize → correlate → blast radius
+    P->>D: resolve inputs (repo root > data/) → load + hash → normalize → correlate → blast radius
     P->>S: normalized_alerts / correlated_incidents / blast_radius_scores
     P->>G: Stage 1 (all incidents, topology, full policy)
     G->>M: strict schema with policy enums
@@ -313,7 +316,7 @@ flowchart LR
 ```mermaid
 flowchart TD
     A[Clean checkout] --> B[make setup]
-    B --> C[Optionally replace data/alerts.jsonl,<br/>data/service_topology.json, data/runbook_policy.json]
+    B --> C[Optionally drop replacement alerts.jsonl /<br/>service_topology.json / runbook_policy.json<br/>in the repo root or data/]
     C --> D{Run mode}
     D -- interactive --> E[make run]
     D -- scripted --> F[make run-scripted DECISIONS=file]
@@ -321,8 +324,8 @@ flowchart TD
     E --> H[make validate]
     F --> H
     G --> H
-    H --> I[21 PASS/FAIL checks · exit code 0 or 1]
-    I --> J[Inspect llm_calls.jsonl, llm_raw/,<br/>run_manifest.json, operator_decisions.json]
+    H --> I[22 PASS/FAIL checks · exit code 0 or 1]
+    I --> J[Inspect llm_calls.jsonl, llm_raw/,<br/>run_manifest.json (input origins), operator_decisions.json]
 ```
 
 ---
@@ -466,7 +469,11 @@ The provider is chosen by `--provider auto|openai|offline`. `auto` uses OpenAI w
 
 ## 9. Artifacts and Audit Trail
 
-Inputs are read from `data/` and every artifact below is written to `data/output/` (both configurable with `--input-dir` and `--out-dir`). Artifact names in `llm_calls.jsonl` → `input_artifacts` / `output_artifact` are relative to those folders: the three input files are relative to `data/`, everything else to `data/output/`.
+Every artifact below is written to `data/output/` (configurable with `--out-dir`).
+
+**Input resolution** (`infrastructure/input_locator.py`): without `--input-dir`, each of the three input files is resolved independently. A file in the repo root takes precedence (where an evaluator is likely to drop replacement fixtures); otherwise the bundled `data/<file>` is used. A file found in neither place is an error naming both paths. When a repo-root file overrides a *different* bundled copy, a `NOTICE` is printed and stored in `run_manifest.json` → `input_notices`. Each input's path, `origin` (`repo_root`, `data_dir` or `explicit`) and SHA-256 are recorded, and the standalone validator re-checks **those exact files**, so a fixture changed after the run is caught.
+
+**`llm_calls.jsonl` paths:** `input_artifacts` and `output_artifact` hold real file paths, relative to the working directory (e.g. `data/runbook_policy.json`, `data/output/incident_analysis.json`). When a call reads or writes one part of a file, that part is named separately in `input_sections` / `output_section` (e.g. `stage1`, `stage2.INC-001`). The validator checks that every logged path exists.
 
 | Artifact | Produced at | Contents |
 |---|---|---|
@@ -477,10 +484,10 @@ Inputs are read from `data/` and every artifact below is written to `data/output
 | `operator_decisions.json` | OPERATOR_REVIEW_COMPLETE | operator, mode, prompt, raw commands (including errors), decisions, per-incident `final_state`, `stage3_input_digest` |
 | `incident_brief.md` | INCIDENT_BRIEF_GENERATED | AI banner, 8 sections, deterministic **Authoritative Action Ledger** |
 | `safe_automation_plan.md`, `postmortem_template.md`, `policy_simulation.json` | OPTIONAL_OUTPUTS_GENERATED | see §5.2 |
-| `llm_calls.jsonl` | every LLM call | `stage, incident_id, timestamp, provider, model, prompt_hash, input_artifacts, output_artifact` + `call_id, attempts, status, latency_ms, errors, pipeline_stage_at_call, raw_record` |
+| `llm_calls.jsonl` | every LLM call | `stage, incident_id, timestamp, provider, model, prompt_hash, input_artifacts, output_artifact` (real paths) + `input_sections, output_section, call_id, attempts, status, latency_ms, errors, pipeline_stage_at_call, raw_record` |
 | `llm_raw/<call_id>.json` | every LLM call | full messages, schema, payload digest, response (git-ignored) |
 | `llm_cache/<prompt_hash>.json` | successful live calls | response for `--replay` (git-ignored by default) |
-| `run_manifest.json` | every stage | input provenance (path, SHA-256, bytes, read time), settings, provider, timestamped stage history with details |
+| `run_manifest.json` | every stage | input provenance (path, origin, SHA-256, bytes, read time), `input_notices`, settings, provider, timestamped stage history with details, `termination` if stopped or failed |
 
 **How the validator proves operator decisions reached Stage 3:** `operator_decisions.stage3_input_digest` must equal the `payload_digest` of the logged Stage 3 request. The Stage 3 payload must carry the same final urgencies and action sets. Replaying the logged decisions over the saved AI plans must reproduce the saved `final_state` exactly.
 
@@ -499,8 +506,9 @@ Inputs are read from `data/` and every artifact below is written to `data/output
 | Persistence | Local filesystem: inputs in `data/`, outputs in `data/output/` (JSON / JSONL / Markdown), atomic writes | Required artifact formats; diffable; evaluator-friendly |
 | CLI | `argparse` (stdlib), `irp` console script | No extra dependency |
 | Secrets | `.env` (git-ignored), minimal built-in loader | No dependency; environment variables take precedence |
-| Testing | **pytest** + **pytest-cov** | 175 tests: unit (domain, application, infrastructure, interface) and integration |
-| Build / run | **Makefile** | `setup`, `run`, `run-scripted`, `replay`, `validate`, `test`, `coverage`, `clean` |
+| Testing | **pytest** + **pytest-cov** | 189 tests: unit (domain, application, infrastructure, interface) and integration |
+| Build / run | **Makefile** + **bash scripts** | `setup`, `run`, `run-scripted`, `replay`, `start`/`start-bg`/`stop`/`status`/`restart`, `validate`, `test`, `coverage`, `clean` |
+| CI | **GitHub Actions** (`.github/workflows/ci.yml`) | pytest + coverage gate (95%) on Python 3.11/3.12/3.13; offline end-to-end run, validate, replay and script smoke test; opt-in live OpenAI job |
 
 Runtime dependencies are `openai` and `pydantic` only.
 
@@ -517,20 +525,23 @@ tests/
 │                                      #           automation tiers, simulator, stage machine
 ├── unit/application/                  # contracts (dynamic enums, strict schema), gateway (retry, replay, stage guard,
 │                                      #           hashing), command parser, review use case, brief consistency
-├── unit/infrastructure/               # filesystem adapters, offline model, OpenAI adapter (mocked client), CLI, consoles
+├── unit/infrastructure/               # input file resolution, filesystem adapters, offline model, OpenAI adapter
+│                                      #   (mocked client), CLI, consoles
 └── integration/                       # end-to-end runs, replay, decision impact, tamper detection, replaced fixtures,
+                                       #   evaluator scenarios (repo-root replacements, validating the files used),
                                        #   run lifecycle (interrupt/failure recorded, start/stop/status scripts)
 ```
 
 Edge cases covered include:
+- **Input files:** replacements in the repo root override `data/` per file; a notice appears only when the override differs; root-only layout; a file missing from both locations; an incomplete `--input-dir`; an input changed after the run.
 - **Alerts:** malformed or blank JSON lines; missing fields; bad severity, timestamp or numbers; boolean values; timezone offsets; unsorted input; empty input.
 - **Topology:** services missing from the topology; cyclic topology; inclusive window boundary; chained windows; siblings joined only through a common dependent.
 - **Change signals:** an orphan deploy event; a deploy outside the window; a deploy never merges unrelated incidents.
 - **Policy:** an action with no policy entry; duplicate or empty policy lists; a disallowed AI action; a wrong AI approval flag; a plan where everything is filtered out.
 - **Review:** invalid incident, action or urgency; last decision wins; a downgrade voids an approval; an upgrade unlocks an action as pending; decision order does not matter; EOF without a blank line.
-- **LLM gateway:** schema violation then retry; semantic failure; provider exception; LLM call before correlation; replay cache miss.
+- **LLM gateway:** schema violation then retry; semantic failure; provider exception; LLM call before correlation; replay cache miss; logical names resolved to real paths and sections.
 - **OpenAI adapter:** temperature fallback; refusal; a 401 error propagates.
-- **Validator:** detects an edited brief, changed inputs, a missing Stage 2 record, a disallowed action, tampered decisions and a missing artifact.
+- **Validator:** detects an edited brief, changed inputs, a missing Stage 2 record, a disallowed action, tampered decisions, a missing artifact, a logged artifact path that does not exist and a corrupt manifest.
 - **Replaced fixtures:** renamed services, a new region, new class names, `P1–P3` urgencies and an action with no policy entry.
 
 ---
@@ -545,7 +556,7 @@ Edge cases covered include:
 | `IRP_CORRELATION_WINDOW_S` / `--window` | env / CLI | `120` |
 | `IRP_ORDER_PATH_PATTERN` | env | `order\|execution\|routing\|router` |
 | `IRP_OPERATOR` | env | OS user |
-| `--input-dir` / `--out-dir` | CLI (`-i`/`-o` in scripts, `DATA_DIR`/`OUT_DIR` in make) | `data` / `data/output` |
+| `--input-dir` / `--out-dir` | CLI (`-i`/`-o` in scripts, `DATA_DIR`/`OUT_DIR` in make) | auto per file (repo root, else `data/`) / `data/output` |
 | `--decisions-file`, `--replay`, `--strict`, `--skip-optional` | CLI | — |
 
 ```bash
@@ -553,8 +564,9 @@ make setup                                   # uv sync --group dev
 make run                                     # interactive review (OpenAI if key present)
 make run-scripted PROVIDER=offline           # scripted review, no network
 make replay                                  # cached LLM responses, same decisions
-make validate                                # 21 checks, exit 1 on failure
+make validate                                # 22 checks, exit 1 on failure
 make test / make coverage
+make start | start-bg | stop | status | restart     # MODE=…, PROVIDER=…, DECISIONS=…, DATA_DIR=…, OUT_DIR=…
 
 scripts/start.sh [-m interactive|scripted|replay] [-p auto|openai|offline] [-b]   # start a run (PID in .run/)
 scripts/status.sh                                                               # RUNNING/IDLE + last stage
@@ -581,7 +593,10 @@ scripts/restart.sh [start options]
 | Stage machine | — | `domain/pipeline_stage.py`, `application/pipeline.py` |
 | `llm_calls.jsonl` | UC-11 | `application/llm_gateway.py` |
 | Validation command | UC-11 | `application/validation.py`, `validate.py`, `make validate` |
-| Clean-checkout re-run, replaced fixtures | UC-12 | `pipeline.run()` stale-artifact purge, `tests/integration/test_replaced_fixtures.py` |
+| Input files read from disk; replaced fixtures | UC-01, UC-12 | `infrastructure/input_locator.py` (repo root > `data/`, per file), `FileSystemInputSource`, `tests/integration/test_evaluator_scenarios.py` |
+| `llm_calls.jsonl` `input_artifacts` / `output_artifact` as paths | UC-11 | `AuditedLLMGateway._resolve_artifacts`, validator check "artifact paths exist on disk" |
+| Clean-checkout re-run | UC-12 | `pipeline.run()` stale-artifact purge, `tests/integration/test_replaced_fixtures.py`, CI end-to-end job |
+| Start / monitor / stop a run | UC-13 | `scripts/*.sh`, CLI SIGTERM handling, `pipeline` termination record, `tests/integration/test_lifecycle.py` |
 
 ---
 
@@ -597,18 +612,18 @@ scripts/restart.sh [start options]
 | OOS-R4 | Chat or conversational interface; web UI or dashboard | The challenge states "not a chat interface" and "not a monitoring dashboard" |
 | OOS-R5 | Publishing the status page or sending communications | Communications are **drafts** only and marked as not published |
 | OOS-R6 | Authentication, RBAC and multi-operator approval (two-person rule) | Single-operator CLI checkpoint; operator identity is recorded from the environment |
-| OOS-R7 | Persistent database, multi-run history and incident deduplication across runs | Each run is self-contained and regenerated from disk |
+| OOS-R7 | Persistent database, multi-run history and incident deduplication across runs | Each run is self-contained and regenerated from disk. **Clarification:** `data/output/llm_cache/` keeps AI responses across runs, but only for `--replay`, looked up by exact prompt hash. It is never used as run history, for trends or for deduplication, so it is not multi-run history. |
 | OOS-R8 | Re-classification inside the what-if simulation | It would need a new non-deterministic LLM call; affected incidents are flagged `requires_reclassification` instead |
 | OOS-R9 | Multi-provider routing, provider failover or cost and latency budgets | One provider per run (OpenAI or offline); simple retry only |
 | OOS-R10 | Ticketing, chat-ops or on-call platform integration (Jira, Slack, PagerDuty) | Recommendations only; no outward-facing actions |
 | OOS-R11 | Editing the runbook policy from the tool | The policy is an input and the source of truth; what-ifs run on in-memory copies |
-| OOS-R12 | Production hardening: daemonisation, horizontal scaling, encrypted artifact storage, PII redaction of prompts | Proof-of-concept scope; `llm_raw/` and `.env` are git-ignored |
+| OOS-R12 | Production hardening: running as a long-lived or supervised service (daemon with restart/respawn), horizontal scaling, encrypted artifact storage, PII redaction of prompts | Proof-of-concept scope; `llm_raw/` and `.env` are git-ignored. **Clarification:** `scripts/start.sh -b` only detaches a **single batch run**, tracked by a PID file, and ends when that run finishes. That is run control (BRD UC-13), not daemonisation. |
 
 ### 14.2 Out-of-scope use cases
 
 | # | Use case (not supported) | Closest supported alternative |
 |---|---|---|
-| OOS-UC1 | "Auto-remediate when confidence is high" | `safe_automation_plan.md` gives tiers, guardrails and promotion criteria |
+| OOS-UC1 | "Auto-remediate when confidence is high" (or any automatic execution, including of policy-cleared actions) | `safe_automation_plan.md` gives tiers, guardrails and promotion criteria. **Clarification:** `auto_cleared_by_policy` is a *status*, not an action. It means the policy says the action needs no human approval and the operator did not reject it. Nothing is executed, and model confidence never changes an action's status. |
 | OOS-UC2 | "Roll back the canary now" from the tool | The operator approves `rollback_latest_change`; the brief and ledger record it for human execution |
 | OOS-UC3 | Operator asks the assistant follow-up questions mid-incident | Re-run with different decisions; replay keeps earlier AI output stable |
 | OOS-UC4 | Merge incidents across regions, or across runs or days | Correlation requires a shared region and the time window within one input file |

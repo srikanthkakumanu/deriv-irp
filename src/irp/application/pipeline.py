@@ -16,6 +16,7 @@ from ..domain.incident import IncidentCorrelator
 from ..domain.pipeline_stage import Stage, StageMachine
 from ..domain.review import ReviewSession
 from ..domain.simulation import PolicySimulator
+from ..shared.paths import display_path
 from .documents import BlastRadiusDocument, IncidentAnalysisDocument, ReviewView
 from .llm_gateway import AuditedLLMGateway
 from .ports import ArtifactStore, Clock, InputSource, LanguageModel, OperatorConsole, ReportPresenter
@@ -64,6 +65,12 @@ class IncidentResponsePipeline:
         self._settings = settings
         self._stages = StageMachine(clock.now())
         self._manifest: dict[str, Any] = {}
+        self._input_paths: dict[str, str] = {}
+
+    def _artifact_path(self, name: str) -> str:
+        """Real path for a logical artifact name: input files map to where they were read from,
+        everything else to the output store."""
+        return display_path(self._input_paths.get(name) or self._store.location(name))
 
     # -- manifest -----------------------------------------------------------------
     def _advance(self, stage: Stage, artifacts: tuple[str, ...] = (), **details: Any) -> None:
@@ -98,7 +105,8 @@ class IncidentResponsePipeline:
         for name in GENERATED_ARTIFACTS:
             self._store.remove(name)
         self._store.remove("llm_raw")
-        gateway = AuditedLLMGateway(self._model, self._store, self._clock, self._stages, replay=self._settings.replay)
+        gateway = AuditedLLMGateway(self._model, self._store, self._clock, self._stages, replay=self._settings.replay,
+                                    artifact_path=self._artifact_path)
         self._manifest = {"run_started_at": self._clock.now(), "settings": self._settings.model_dump(),
                           "llm_provider": {"provider": self._model.name, "model": self._model.model}, "inputs": {},
                           "stages": [t.model_dump(mode="json") for t in self._stages.history]}
@@ -108,7 +116,14 @@ class IncidentResponsePipeline:
         # 1. Inputs from disk
         inputs = self._inputs.load()
         self._manifest["inputs"] = {k: v.model_dump() for k, v in inputs.provenance.items()}
-        self._advance(Stage.INPUTS_LOADED, tuple(p.path for p in inputs.provenance.values()))
+        self._manifest["input_notices"] = list(inputs.notices)
+        file_names = {"alerts": "alerts.jsonl", "topology": "service_topology.json", "policy": "runbook_policy.json"}
+        self._input_paths = {file_names[k]: v.path for k, v in inputs.provenance.items()}
+        for label, prov in inputs.provenance.items():
+            self._log(f"input {file_names[label]} <- {display_path(prov.path)} ({prov.origin})")
+        for notice in inputs.notices:
+            self._log(f"NOTICE: {notice}")
+        self._advance(Stage.INPUTS_LOADED, tuple(display_path(p.path) for p in inputs.provenance.values()))
         policy, topology = inputs.policy, inputs.topology
 
         # 2. Deterministic normalization

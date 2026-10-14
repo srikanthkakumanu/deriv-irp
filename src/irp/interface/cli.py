@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from ..application.llm_gateway import LLMGatewayError
-from ..bootstrap import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, RunConfig, build_pipeline, build_validator
+from ..bootstrap import DEFAULT_OUTPUT_DIR, RunConfig, build_pipeline, build_validator
 from ..domain.errors import DomainError
 from ..infrastructure.filesystem import InputFileError
 
@@ -34,7 +34,8 @@ def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="irp", description="Incident-response orchestration pipeline (planning only; executes nothing).")
     sub = ap.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="run the full staged pipeline")
-    run.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR, help="folder with the 3 input files (default: data)")
+    run.add_argument("--input-dir", type=Path, default=None,
+                     help="folder with the 3 input files (default: each file from the repo root if present, else data/)")
     run.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="artifact folder (default: data/output)")
     run.add_argument("--provider", choices=["auto", "openai", "offline"], default=os.environ.get("IRP_PROVIDER", "auto"))
     run.add_argument("--decisions-file", type=Path, help="replay operator review commands from a file")
@@ -43,13 +44,18 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--strict", action="store_true", help="fail on the first malformed alert row")
     run.add_argument("--skip-optional", action="store_true")
     val = sub.add_parser("validate", help="validate the artifacts of the last run")
-    val.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR, help="folder with the 3 input files (default: data)")
+    val.add_argument("--input-dir", type=Path, default=None,
+                     help="folder with the 3 input files (default: the files recorded in the run manifest)")
     val.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="artifact folder (default: data/output)")
     return ap
 
 
-def validate(input_dir: Path, out_dir: Path) -> int:
-    results = build_validator(input_dir, out_dir).run()
+def validate(input_dir: Path | None, out_dir: Path) -> int:
+    try:
+        results = build_validator(input_dir, out_dir).run()
+    except InputFileError as exc:
+        print(f"FAIL  input files: {exc}")
+        return 1
     width = max(len(r.name) for r in results)
     for r in results:
         print(f"{'PASS' if r.ok else 'FAIL'}  {r.name:<{width}}  {r.detail}")
